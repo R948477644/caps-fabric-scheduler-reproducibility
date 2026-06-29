@@ -1,0 +1,40 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8082/submit",
+    "clients": 100,
+    "tps": 300,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 100,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/4/default-policy/exp4-default-policy-w3-traditional-lock-hot100-300tps-rep08-client.json"
+  },
+  "sent": 6000,
+  "localDropped": 0,
+  "completed": 6000,
+  "statusCounts": {
+    "200": 1649,
+    "408": 973,
+    "429": 3378
+  },
+  "functionCounts": {
+    "Transfer": 4200,
+    "AuditAccounts": 1200,
+    "BatchTransfer": 600
+  },
+  "latencyTotalMs": 10958916,
+  "latencyMaxMs": 8124,
+  "elapsedMs": 26103,
+  "sendRate": 300,
+  "completionRate": 229.85863693828296,
+  "latencyAvgMs": 1826.486
+}

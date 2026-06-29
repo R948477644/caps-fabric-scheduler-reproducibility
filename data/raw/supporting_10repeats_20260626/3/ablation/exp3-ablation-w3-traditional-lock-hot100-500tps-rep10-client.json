@@ -1,0 +1,40 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8082/submit",
+    "clients": 100,
+    "tps": 500,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 100,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/3/ablation/exp3-ablation-w3-traditional-lock-hot100-500tps-rep10-client.json"
+  },
+  "sent": 10000,
+  "localDropped": 0,
+  "completed": 10000,
+  "statusCounts": {
+    "200": 1815,
+    "408": 948,
+    "429": 7237
+  },
+  "functionCounts": {
+    "Transfer": 7000,
+    "AuditAccounts": 2000,
+    "BatchTransfer": 1000
+  },
+  "latencyTotalMs": 11707940,
+  "latencyMaxMs": 7094,
+  "elapsedMs": 26560,
+  "sendRate": 500,
+  "completionRate": 376.50602409638554,
+  "latencyAvgMs": 1170.794
+}

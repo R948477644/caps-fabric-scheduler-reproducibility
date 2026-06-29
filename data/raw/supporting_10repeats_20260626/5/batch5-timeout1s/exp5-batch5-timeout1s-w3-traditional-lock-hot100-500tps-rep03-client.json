@@ -1,0 +1,40 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8082/submit",
+    "clients": 100,
+    "tps": 500,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 100,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/5/batch5-timeout1s/exp5-batch5-timeout1s-w3-traditional-lock-hot100-500tps-rep03-client.json"
+  },
+  "sent": 10000,
+  "localDropped": 0,
+  "completed": 10000,
+  "statusCounts": {
+    "200": 2209,
+    "408": 862,
+    "429": 6929
+  },
+  "functionCounts": {
+    "Transfer": 7000,
+    "AuditAccounts": 2000,
+    "BatchTransfer": 1000
+  },
+  "latencyTotalMs": 11401148,
+  "latencyMaxMs": 6074,
+  "elapsedMs": 25707,
+  "sendRate": 500,
+  "completionRate": 388.9991053020578,
+  "latencyAvgMs": 1140.1148
+}

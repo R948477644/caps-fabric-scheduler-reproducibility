@@ -1,0 +1,27 @@
+{
+  "name": "caps-fabric-scheduler-reproducibility",
+  "version": "1.0.0-peerj-submission",
+  "description": "Reproducibility package for the CAPS scheduler experiments on Hyperledger Fabric.",
+  "main": "index.js",
+  "scripts": {
+    "summarize:supply-chain": "node src/scheduler/summarize-supply-chain.js",
+    "summarize:overhead": "node src/scheduler/summarize-caps-overhead.js",
+    "figures": "python scripts/generate_paper_figures.py"
+  },
+  "keywords": [
+    "hyperledger-fabric",
+    "transaction-scheduling",
+    "mvcc",
+    "supply-chain",
+    "reproducibility"
+  ],
+  "author": "Runde Liu",
+  "license": "MIT",
+  "devDependencies": {
+    "@hyperledger/caliper-cli": "^0.5.0"
+  },
+  "dependencies": {
+    "fabric-network": "^2.2.12",
+    "js-yaml": "^4.1.0"
+  }
+}

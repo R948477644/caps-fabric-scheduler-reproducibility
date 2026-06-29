@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this code or data, please cite the archived release and the associated paper."
+title: "CAPS Fabric Scheduler Reproducibility Package"
+authors:
+  - family-names: "Liu"
+    given-names: "Runde"
+version: "1.0.0-peerj-submission"
+date-released: "2026-06-29"
+repository-code: "https://github.com/USERNAME/caps-fabric-scheduler-reproducibility"
+license: "MIT"
+abstract: "Code, configuration, raw data, processed data, figures, and manuscript assets for CAPS, a conflict-aware and pressure-adaptive scheduler for high-contention supply-chain transactions in Hyperledger Fabric."

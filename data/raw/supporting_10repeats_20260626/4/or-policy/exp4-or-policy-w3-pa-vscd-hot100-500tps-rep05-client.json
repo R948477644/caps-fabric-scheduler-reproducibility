@@ -1,0 +1,39 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8086/submit",
+    "clients": 100,
+    "tps": 500,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 100,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/4/or-policy/exp4-or-policy-w3-pa-vscd-hot100-500tps-rep05-client.json"
+  },
+  "sent": 10000,
+  "localDropped": 0,
+  "completed": 10000,
+  "statusCounts": {
+    "200": 4030,
+    "429": 5970
+  },
+  "functionCounts": {
+    "Transfer": 7000,
+    "AuditAccounts": 2000,
+    "BatchTransfer": 1000
+  },
+  "latencyTotalMs": 4595363,
+  "latencyMaxMs": 7840,
+  "elapsedMs": 26686,
+  "sendRate": 500,
+  "completionRate": 374.72832196657424,
+  "latencyAvgMs": 459.5363
+}

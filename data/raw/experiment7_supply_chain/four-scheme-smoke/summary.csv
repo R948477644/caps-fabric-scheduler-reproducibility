@@ -1,0 +1,5 @@
+workload,scheduler,offeredLoad,repeats,invariantPasses,committedMean,committedStd,goodputMean,goodputStd,admissionRejectedMean,admissionRejectedStd,queueTimeoutMean,queueTimeoutStd,failedMean,failedStd,latencyAvgMsMean,latencyAvgMsStd,queueWaitAvgMsMean,queueWaitAvgMsStd,mvccFailuresMean,mvccFailuresStd
+sc-w1,caps,2,1,1,2,0,0.9564801530368244,0,0,0,0,0,0,0,1839.5,0,0.5,0,0,0
+sc-w1,ed-mvcc,2,1,1,2,0,0.9610764055742431,0,0,0,0,0,0,0,1829.5,0,0,0,0,0
+sc-w1,native,2,1,1,2,0,0.9380863039399624,0,0,0,0,0,0,0,1880.5,0,0,0,0,0
+sc-w1,traditional-lock,2,1,1,2,0,0.8557980316645271,0,0,0,0,0,0,0,2085,0,0,0,0,0

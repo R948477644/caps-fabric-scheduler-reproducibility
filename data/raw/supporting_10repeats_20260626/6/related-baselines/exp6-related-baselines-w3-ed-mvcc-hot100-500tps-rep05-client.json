@@ -1,0 +1,39 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8087/submit",
+    "clients": 100,
+    "tps": 500,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 100,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/6/related-baselines/exp6-related-baselines-w3-ed-mvcc-hot100-500tps-rep05-client.json"
+  },
+  "sent": 10000,
+  "localDropped": 0,
+  "completed": 10000,
+  "statusCounts": {
+    "200": 3875,
+    "429": 6125
+  },
+  "functionCounts": {
+    "Transfer": 7000,
+    "AuditAccounts": 2000,
+    "BatchTransfer": 1000
+  },
+  "latencyTotalMs": 467835,
+  "latencyMaxMs": 2086,
+  "elapsedMs": 22040,
+  "sendRate": 500,
+  "completionRate": 453.7205081669692,
+  "latencyAvgMs": 46.7835
+}

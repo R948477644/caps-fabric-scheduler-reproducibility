@@ -1,0 +1,40 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8084/submit",
+    "clients": 100,
+    "tps": 500,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 100,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/3/ablation/exp3-ablation-w3-pacc-dabs-hot100-500tps-rep06-client.json"
+  },
+  "sent": 10000,
+  "localDropped": 0,
+  "completed": 10000,
+  "statusCounts": {
+    "200": 5076,
+    "429": 4917,
+    "599": 7
+  },
+  "functionCounts": {
+    "Transfer": 7000,
+    "AuditAccounts": 2000,
+    "BatchTransfer": 1000
+  },
+  "latencyTotalMs": 13546824,
+  "latencyMaxMs": 21496,
+  "elapsedMs": 37526,
+  "sendRate": 500,
+  "completionRate": 266.4819058785908,
+  "latencyAvgMs": 1354.6824
+}

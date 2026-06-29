@@ -1,0 +1,894 @@
+%% PeerJ Computer Science submission draft.
+%% Replace the affiliation and corresponding-author placeholders before submission.
+\documentclass[fleqn,10pt,lineno]{wlpeerj}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{amsmath,amssymb}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{natbib}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{placeins}
+\bibliographystyle{apalike}
+
+\makeatletter
+\setlength{\@fptop}{0pt}
+\setlength{\@fpsep}{14pt}
+\setlength{\@fpbot}{0pt plus 1fil}
+\makeatother
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.95}
+\renewcommand{\textfraction}{0.06}
+\renewcommand{\floatpagefraction}{0.80}
+\setlength{\textfloatsep}{16pt plus 3pt minus 3pt}
+\setlength{\floatsep}{14pt plus 3pt minus 3pt}
+
+\graphicspath{{figures_clean/}{figures/}}
+\newcommand{\caps}{\textsc{Caps}}
+\newcommand{\tx}{\textit{tx}}
+\newcommand{\goodput}{\textit{goodput}}
+\newcommand{\Rset}{\mathcal{R}}
+\newcommand{\Wset}{\mathcal{W}}
+
+\title{CAPS: Conflict-Aware and Pressure-Adaptive Scheduling for High-Contention Supply-Chain Transactions in Hyperledger Fabric}
+
+\author[1]{Runde Liu}
+\affil[1]{[Affiliation to be completed before submission]}
+\corrauthor[1]{Runde Liu}{[email address to be completed]}
+
+\begin{abstract}
+Hyperledger Fabric is widely used to coordinate transactions among known organizations in supply-chain systems, where warehouse inventory, product batches, and asset states are updated under shared endorsement policies. Its execute--order--validate architecture can waste resources under hotspot updates because conflicting transactions may complete endorsement and ordering before multiversion concurrency control (MVCC) invalidates them. A conservative external lock suppresses these conflicts, but often replaces validation waste with long queues. This paper presents CAPS, a Conflict-Aware and Pressure-Adaptive Scheduler deployed before the Fabric Gateway. CAPS derives conservative read and write sets from chaincode arguments, prevents unsafe concurrent submissions, selects compatible batches from a bounded waiting window, and tightens admission when queue occupancy, recent queueing delay, or hotspot backlog indicates overload. We evaluate CAPS on a real containerized Fabric network with four peers, one Raft orderer, and 100 logical clients. The workload models warehouse transfer, batch distribution, batch-state update, and inventory audit operations. Across three workloads, two offered loads, four methods, and ten repetitions per setting, CAPS keeps observed MVCC-invalid transactions at zero and increases committed transactions by 101.2\%--333.0\% relative to Traditional Lock. In the central-warehouse workload at 500 tx/s, CAPS commits 3,562.8 transactions, compared with 822.9 for Traditional Lock. CAPS is not a universal throughput maximizer. It deliberately trades early admission rejection for lower conflict waste and bounded queueing delay, and it relies on conservative access-set prediction without modifying Fabric consensus or validation.
+\end{abstract}
+
+\begin{document}
+
+\flushbottom
+\maketitle
+\thispagestyle{empty}
+
+\section*{Introduction}
+
+Permissioned blockchains are increasingly used for inter-organizational supply-chain coordination, asset management, and auditable business workflows. Fabric-based supply-chain systems have been proposed for production traceability, warehousing, distribution, and regulatory oversight, with distinct organizations participating through authenticated identities and shared channels \citep{chen2023tea}. In these settings, concurrent orders often target a small set of popular stock-keeping units (SKUs), a central warehouse, or a batch under recall. Hyperledger Fabric is attractive because it supports configurable endorsement and membership policies while separating transaction execution, ordering, and validation \citep{androulaki2018fabric,fabric25docs}.
+
+Fabric's execute--order--validate (EOV) pipeline also creates a characteristic performance problem. Endorsing peers first simulate a chaincode invocation and produce a read/write set. The endorsed transaction is then ordered into a block, after which committing peers verify the endorsement policy and validate read versions using MVCC. When many concurrent transactions access the same accounts or application objects, several transactions can be endorsed from the same state version, while only a subset remains valid at commit time. Transactions invalidated during validation have already consumed endorsement, ordering, broadcast, and validation resources.
+
+One possible response is to place a lock manager before Fabric. A Traditional Lock scheduler can prevent transactions with overlapping read/write sets from entering Fabric concurrently and can therefore suppress MVCC conflicts. However, conservative locking performs poorly under mixed read/write hotspot workloads. Transactions accumulate behind busy keys even when some waiting transactions are mutually compatible. The system avoids validation failures but replaces them with long queueing delays.
+
+This work asks whether conflict handling can be moved before Fabric submission without introducing the long queues of a conservative lock, focusing on supply-chain transactions whose access sets are exposed by warehouse, SKU, batch, and destination identifiers. We propose CAPS, a Conflict-Aware and Pressure-Adaptive Scheduler positioned between the client workload generator and the Fabric Gateway. CAPS borrows the predeclared-access-set idea from Very Lightweight Locking (VLL) \citep{ren2015vll}, but applies it to the Fabric submission path rather than replacing Fabric's concurrency control. Waiting transactions do not hold keys. Only transactions currently being submitted reserve active read/write sets, which removes hold-and-wait from the scheduler. A bounded-window scheduler searches for a mutually compatible batch, while a pressure-aware controller sheds excess load before queueing delay becomes unbounded.
+
+The main contributions are as follows:
+
+\begin{enumerate}[noitemsep]
+  \item We design CAPS, a client-side scheduler that moves conflict prevention ahead of Fabric endorsement and ordering while preserving Fabric's consensus and validation semantics.
+  \item We introduce an Access-set Conflict Guard (ACG) and a Dependency-aware Batch Scheduler (DBS). Together, they identify conflict-safe transactions and select compatible batches from a waiting window instead of enforcing conservative FIFO serialization.
+  \item We introduce a Pressure-adaptive Admission Controller (PAC) that combines queue occupancy, recent queueing delay, and hotspot backlog. PAC performs active load shedding under overload and exposes admission rejection instead of allowing queueing delay to grow without bound.
+  \item We provide safety, deadlock-freedom, and conditional liveness arguments for the scheduler and implement a complete prototype around a real Fabric network.
+  \item We evaluate CAPS on supply-chain workloads with uniform SKU access, Zipf-hotspot SKU access, and central-warehouse distribution, and supplement the study with controlled microbenchmark experiments covering offered load, hotspot concentration, module ablation, endorsement policy, block-cutting parameters, and related-work-inspired baselines.
+\end{enumerate}
+
+\section*{Related Work}
+
+\subsection*{Fabric-based supply-chain applications}
+
+Supply-chain management is one of the most common application domains for permissioned blockchains because the participants are known organizations, the workflow spans administrative boundaries, and the ledger must preserve a shared audit trail. Recent Fabric-based studies have applied this model to tea production data, pharmaceutical logistics, agricultural or rubber supply chains, and trusted food traceability \citep{chen2023tea,dash2024hcsrl,keo2025rubber,zhou2026trusted}. These systems commonly model production, warehousing, transport, inspection, and retail events as ledger transactions, and several of them use Hyperledger Caliper or similar measurements to report chaincode invocation latency and throughput.
+
+This line of work explains why the application setting is relevant but also reveals a gap. Most supply-chain papers emphasize provenance, anti-counterfeiting, privacy, or system architecture; performance evaluation is often limited to normal read/write calls. In operational settings, however, valid business requests are not uniformly distributed. A popular SKU, a central warehouse, a recalled batch, or a frequently audited asset can attract many concurrent updates. The resulting hotspot is exactly where Fabric's optimistic validation can waste resources: requests that are semantically valid may still be invalidated because they read stale versions of the same inventory or asset record. CAPS therefore treats supply-chain transactions not only as a traceability use case, but as a concrete high-contention workload with predictable access sets.
+
+\subsection*{Hyperledger Fabric performance and failure analysis}
+
+The original Fabric architecture established the EOV pipeline and modular trust model \citep{androulaki2018fabric}. BlockBench provided an early cross-platform methodology for identifying bottlenecks in private blockchains \citep{dinh2017blockbench}. Subsequent benchmarking studies showed that Fabric performance depends on endorsement, ordering, state-database access, block cutting, and client concurrency \citep{thakkar2018performance}. Chacko, Mayer \& Jacobsen \citep{chacko2021failures} studied Fabric transaction failures in detail and showed that workload dependencies, block size, endorsement policies, and other configuration choices can strongly affect invalid transactions. FastFabric redesigned several internal paths and reported substantial throughput improvements \citep{gorenflo2019fastfabric}. FabricETP later targeted concurrent conflicting transactions by changing transaction processing and committing behavior \citep{wu2023fabricetp}. Hyperledger Caliper has since become a common tool for generating offered load and measuring throughput and latency \citep{caliperdocs}.
+
+These studies establish that Fabric performance is not a solved problem and that transaction failures are not merely implementation noise. CAPS differs from parameter tuning and internal pipeline acceleration. It does not seek a single optimal block size or batch timeout, and it does not modify the peer, ordering service, block format, or validation implementation. Instead, it controls which transactions enter Fabric concurrently, using application-visible access sets. The design is therefore closer to a deployment-side concurrency-control mechanism than to a new Fabric kernel or benchmark-only study.
+
+\subsection*{Transaction conflict control in Fabric}
+
+Database-oriented analyses of Fabric have highlighted the relationship between blockchain validation and database concurrency control \citep{sharma2019blurring}. Earlier Fabric-specific work proposed locking, dependency-aware ordering, and commit-time changes to reduce concurrency conflicts \citep{xu2020concurrency,wu2023fabricetp}. A recent taxonomy by \citet{debreczeni2024taxonomy} further frames Fabric conflict handling as a distinct research problem and organizes existing approaches around conflict detection, avoidance, prevention, and reordering. This is important for the present paper: the motivation is not that Fabric has never been optimized, but that conflict-heavy Fabric workloads remain an active research topic with several competing design points and deployment assumptions.
+
+The first design point is \emph{early MVCC conflict detection}. These methods move part of the version or dependency reasoning before final validation so that transactions predicted to fail consume less downstream work \citep{trabelsi2023early,stoltidis2024highconflict}. Recent work has also explored learned or graph-based conflict prediction, including graph-isomorphism models for MVCC conflict detection \citep{alzahrani2025gin}. Their primary benefit is fast rejection or fast warning. CAPS uses the same observation that conflicts should be recognized before validation, but it does not stop at pairwise early rejection: it keeps a bounded waiting window and tries to find compatible work that can still make ledger progress.
+
+The second design point is \emph{client-side conflict avoidance}. Client-side approaches reduce invalid transactions by changing how clients select keys, submit operations, or react to dependency information \citep{ji2024better}. CAPS is also external to the peer and orderer, but it differs in responsibility. Rather than asking independent clients to avoid conflicts locally, CAPS centralizes admission, compatibility checking, batch selection, and overload control at a gateway-adjacent scheduler.
+
+The third design point is \emph{dependency reduction and reordering}. These methods construct transaction dependency information and try to order or group transactions so that fewer conflicts survive into validation \citep{ma2024key,kim2025dependency}. CAPS shares the idea of using dependency information, but the objective is narrower and more deployment-oriented: it does not change block construction or peer validation. It chooses a compatible submission batch before Fabric and combines that choice with pressure-adaptive admission.
+
+These approaches motivate two baselines used later in this paper. ED-MVCC-Reimpl represents early detection: it rejects a new transaction when its access set conflicts with a pending transaction. DRT-Reimpl represents dependency-reduction and reordering: it ranks candidates using dependency information but does not apply pressure-adaptive admission. They are mechanism-level reimplementations under a shared Fabric testbed, not source-level reproductions of the original systems; their scope and fairness controls are specified in the experimental method. CAPS differs by combining conflict-safe admission, compatible batch selection, and pressure-aware load shedding in one external scheduler. This combination is the main research gap addressed here: existing methods tend to emphasize either reducing invalid transactions, improving order/dependency structure, or optimizing Fabric internals, whereas high-contention supply-chain services also need an operating point that preserves useful commits without allowing admission queues to become the hidden bottleneck.
+
+\subsection*{Predeclared access sets and lightweight locking}
+
+VLL redesigns lock management for main-memory databases under the assumption that transactions can declare or predict their access sets before execution \citep{ren2015vll}. Its key lesson for CAPS is not the database lock-manager implementation itself, but the value of using predeclared access sets to avoid unnecessary waiting. Fabric chaincode invocations often expose sufficient information for such prediction. A transfer request identifies source and destination accounts, a batch transfer identifies all participating accounts, and an audit request identifies the keys to read.
+
+CAPS therefore borrows an access-set principle from VLL but changes the setting, timing, and failure model. VLL controls locks inside a database execution engine; CAPS controls submission to an existing Fabric network. VLL focuses on lock-manager overhead and deadlock behavior for main-memory transactions; CAPS focuses on avoiding late MVCC invalidation, conservative FIFO serialization, and unbounded queue growth in the EOV pipeline. This placement limits deployment cost and leaves Fabric's ledger semantics intact, but it also means that CAPS depends on conservative and correct access-set prediction.
+
+\section*{Background and Problem Definition}
+
+\subsection*{Fabric transaction flow and late conflict detection}
+
+A Fabric transaction normally proceeds through proposal, endorsement simulation, transaction assembly, ordering, block broadcast, validation, and commit. During simulation, endorsing peers record the versions of keys read by the transaction. During validation, a transaction becomes MVCC-invalid if a previously committed transaction has changed a version in its read set.
+
+Figure~\ref{fig:eov} contrasts the native EOV path with the CAPS-assisted path. In native Fabric, a hotspot conflict is exposed near the end of the pipeline. With CAPS, access-set conflict checks, batch selection, and overload control occur before the transaction enters the Gateway. Admission-rejected and queue-timeout transactions consume no Fabric endorsement or ordering resources.
+
+\begin{figure*}[ht]
+\centering
+\includegraphics[width=\textwidth]{fig1_eov_flow_favorite_vector.png}
+\caption{Native Fabric and Fabric with CAPS. Native Fabric detects read-version conflicts during validation, after endorsement and ordering resources have been consumed. CAPS performs access-set conflict checks and overload admission before forwarding a transaction to Fabric.}
+\label{fig:eov}
+\end{figure*}
+
+\subsection*{Traditional Lock baseline}
+
+Traditional Lock is a conservative external scheduler used as the main baseline. Before submitting a transaction, it checks whether any required key is occupied by another active submission. A conflicting transaction joins a waiting queue and is submitted only after the relevant keys are released. This strategy is conflict-safe for correctly predicted access sets, but it tends to serialize mixed workloads and can produce long lock queues.
+
+\subsection*{Problem statement}
+
+Supply-chain transactions provide a concrete instance of this problem. Inventory transfers name a source warehouse, destination warehouse, SKU, and quantity. Batch distribution names several such transfers. Batch-state updates name the batch record. Inventory audits name the keys to read. These arguments expose a conservative approximation of the transaction access set before endorsement.
+
+The performance challenge is that the same business structure also creates hotspots. A central warehouse, a popular SKU, or a recalled batch can attract many concurrent requests. Native Fabric discovers most resulting version conflicts late, during validation. Traditional Lock prevents these conflicts but can turn the central warehouse or popular SKU into a long FIFO waiting point.
+
+For a transaction $T$, let $\Rset(T)$ and $\Wset(T)$ denote the predicted read and write sets. Let $\mathcal{R}^{\mathrm{act}}(T)$ and $\mathcal{W}^{\mathrm{act}}(T)$ denote the actual Fabric read and write sets produced during endorsement simulation. CAPS requires a conservative prediction contract:
+
+\begin{equation}
+\mathcal{R}^{\mathrm{act}}(T)\subseteq\Rset(T),\qquad \mathcal{W}^{\mathrm{act}}(T)\subseteq\Wset(T).
+\label{eq:prediction-contract}
+\end{equation}
+
+If Eq.~\eqref{eq:prediction-contract} is violated, an undeclared key may conflict with another active transaction and Fabric may still produce an MVCC-invalid transaction. If the prediction is a strict superset, safety is preserved but concurrency is reduced because the scheduler may reject or delay transactions that would not actually conflict.
+
+We seek an external scheduling policy that:
+
+\begin{enumerate}[noitemsep]
+  \item never submits mutually conflicting transactions concurrently when the prediction contract holds;
+  \item increases valid ledger progress rather than raw request emission;
+  \item bounds queue growth and client-observed latency under overload; and
+  \item preserves its main latency-control behavior across tested endorsement and block-cutting settings, while exposing low-throughput boundary cases.
+\end{enumerate}
+
+Two transactions $T_i$ and $T_j$ are compatible if and only if
+
+\begin{equation}
+\Wset(T_i)\cap\Wset(T_j)=\varnothing,\quad
+\Wset(T_i)\cap\Rset(T_j)=\varnothing,\quad
+\Rset(T_i)\cap\Wset(T_j)=\varnothing.
+\label{eq:compatibility}
+\end{equation}
+
+Read--read overlap is permitted.
+
+\section*{CAPS Design}
+
+\subsection*{Design goals}
+
+CAPS is designed around four goals that follow directly from the supply-chain contention problem.
+
+\begin{itemize}[noitemsep]
+  \item \textbf{G1: preserve Fabric semantics.} CAPS must not modify endorsement, ordering, validation, or ledger commit. Every accepted request is still processed by the normal Fabric Gateway and peer pipeline.
+  \item \textbf{G2: prevent avoidable MVCC waste.} When a request's access set can be conservatively predicted, CAPS should prevent read--write and write--write overlaps before endorsement and ordering consume resources.
+  \item \textbf{G3: avoid conservative FIFO serialization.} A hotspot should not force all queued transactions to wait if some of them are mutually compatible. The scheduler should search a bounded window for compatible work.
+  \item \textbf{G4: make overload explicit.} Under sustained overload, the scheduler should expose admission rejection and queue timeouts instead of allowing unbounded waiting to hide inside client latency.
+\end{itemize}
+
+\subsection*{System architecture}
+
+CAPS is deployed between the HTTP workload generator and the Fabric Gateway SDK. As shown in Figure~\ref{fig:architecture}, the scheduler contains three logical components:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{ACG (Access-set Conflict Guard)} derives $\Rset(T)$ and $\Wset(T)$ and enforces the compatibility rule.
+  \item \textbf{DBS (Dependency-aware Batch Scheduler)} examines a bounded candidate window and selects a mutually compatible batch.
+  \item \textbf{PAC (Pressure-adaptive Admission Controller)} monitors queue occupancy, recent queueing delay, and per-key backlog and adjusts admission under overload.
+\end{itemize}
+
+\begin{figure*}[ht]
+\centering
+\includegraphics[width=0.96\textwidth]{fig2_architecture_favorite_vector.png}
+\caption{CAPS prototype architecture. ACG derives access sets, DBS selects a compatible batch from the waiting window, and PAC controls overload through pressure-adaptive admission and explicit feedback.}
+\label{fig:architecture}
+\end{figure*}
+
+\subsection*{Access-set derivation}
+
+The controlled microbenchmark chaincode exposes three functions:
+
+\begin{itemize}[noitemsep]
+  \item \texttt{Transfer(from,to,amount)} reads and writes \texttt{from} and \texttt{to}.
+  \item \texttt{BatchTransfer(operations)} reads and writes every account referenced by its sub-transfers.
+  \item \texttt{AuditAccounts(accounts)} reads the listed accounts and writes no account.
+\end{itemize}
+
+These rules are deterministic for the experimental chaincode. For a production chaincode with dynamic branches, a deployment would require developer annotations, static analysis, or a conservative superset of possible keys.
+
+The supply-chain extension uses the same derivation principle:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{TransferInventory} reads and writes the source and destination inventory records. The key template is \texttt{inv:\{warehouse\}:\{sku\}}.
+  \item \texttt{BatchTransferInventory} accesses the union of all keys in a distribution batch.
+  \item \texttt{UpdateBatchStatus} reads and writes \texttt{batch:\{id\}}.
+  \item \texttt{AuditInventory} reads its declared inventory-key list.
+\end{itemize}
+These functions make the mapping from business arguments to access sets explicit rather than relabeling account identifiers.
+
+\paragraph{Coverage enforcement.}
+In a production deployment, Eq.~\eqref{eq:prediction-contract} should be treated as an interface contract between chaincode and scheduler. One practical path is to require each chaincode entry point to expose an annotation or sidecar rule that maps request arguments to key templates. A static checker can then inspect \texttt{GetState} and \texttt{PutState} key expressions and reject a rule when an accessed key template is not covered. Branches that depend on ledger state should either declare the union of all possible branch keys or fall back to a conservative coarse-grained key. External service calls are outside Fabric's MVCC model; their side effects should be excluded from CAPS or represented by an explicit coarse resource key if they must be serialized.
+
+Runtime checking can also be used during testing. A shadow-audit mode can instrument chaincode or parse proposal read/write sets and compare actual keys against predicted keys. Any actual key outside the predicted set is an underprediction bug. In the live system, unexpected MVCC-invalid transactions under CAPS are a useful alarm because correctly predicted conflicting submissions should have been prevented before Fabric validation.
+
+\begin{algorithm}[ht]
+\caption{ACG: access-set conflict guard}
+\label{alg:acg}
+\begin{algorithmic}[1]
+\Require Request $r$; active read counters $AR$; active write counters $AW$
+\Ensure Submit immediately, or pass $r$ to the waiting queue
+\State $(\Rset(r),\Wset(r)) \gets$ \Call{DeriveAccessSet}{$r$}
+\ForAll{$k\in\Rset(r)$}
+  \If{$AW[k]>0$}
+    \State \Return queue
+  \EndIf
+\EndFor
+\ForAll{$k\in\Wset(r)$}
+  \If{$AW[k]>0$ \textbf{or} $AR[k]>0$}
+    \State \Return queue
+  \EndIf
+\EndFor
+\State atomically increment $AR[k]$ for $k\in\Rset(r)$ and $AW[k]$ for $k\in\Wset(r)$
+\State \Return submit
+\end{algorithmic}
+\end{algorithm}
+
+\subsection*{Active sets and waiting transactions}
+
+CAPS maintains \texttt{activeReaders[k]} and \texttt{activeWriters[k]}. A waiting transaction does not reserve any key. Transaction $T$ is runnable if no key in $\Rset(T)$ has an active writer and no key in $\Wset(T)$ has an active reader or writer. When all required keys are available, CAPS atomically registers the complete access set and starts the Fabric submission.
+
+This design differs from a lock protocol in which a waiting transaction may hold a subset of its locks. The absence of partial ownership is central to the deadlock argument given below.
+
+\subsection*{Dependency-aware batch scheduling}
+
+In each scheduling round, DBS inspects the first $B$ waiting transactions; $B=256$ in the experiments. Candidates that conflict with active submissions are removed. For each remaining transaction, DBS estimates a write-conflict cost:
+
+\begin{equation}
+\mathrm{conflictCost}(T)=\sum_{k\in\Wset(T)}(\mathrm{freq}(k)-1),
+\label{eq:conflict-cost}
+\end{equation}
+
+where $\mathrm{freq}(k)$ is the number of candidate transactions that write key $k$. A high cost indicates that scheduling $T$ may prevent several alternatives from running.
+
+To reduce starvation risk, DBS adds an aging term:
+
+\begin{equation}
+\mathrm{age}(T)=\left\lfloor
+\frac{\mathrm{now}-\mathrm{arrivalTime}(T)}{\Delta}
+\right\rfloor,
+\label{eq:age}
+\end{equation}
+
+where $\Delta=100$ ms. The scheduling score is
+
+\begin{equation}
+\mathrm{score}(T)=
+\alpha\,\mathrm{age}(T)
+-\beta\,\mathrm{conflictCost}(T)
+-\eta\,\mathrm{hotness}(T)
+-\gamma\,\mathrm{position}(T).
+\label{eq:score}
+\end{equation}
+
+The implementation uses $\alpha=10$, $\beta=1$, $\eta=0.25$, and $\gamma=0.001$. Candidates are sorted by score, after which DBS greedily constructs a mutually compatible batch until the active-submission limit is reached.
+
+\begin{algorithm}[ht]
+\caption{DBS: dependency-aware batch selection}
+\label{alg:dbs}
+\begin{algorithmic}[1]
+\Require Waiting queue $Q$; active counters; candidate window size $B$
+\Ensure Compatible batch $S$
+\State Remove expired requests from $Q$ and report queue timeouts
+\State $C \gets$ first $B$ requests in $Q$ that do not conflict with active counters
+\ForAll{$T\in C$}
+  \State compute $\mathrm{conflictCost}(T)$ using Eq.~\eqref{eq:conflict-cost}
+  \State compute $\mathrm{age}(T)$ using Eq.~\eqref{eq:age}
+  \State compute $\mathrm{score}(T)$ using Eq.~\eqref{eq:score}
+\EndFor
+\State sort $C$ by decreasing score
+\State $S\gets\varnothing$
+\ForAll{$T\in C$}
+  \If{$T$ is compatible with every transaction already in $S$}
+    \State $S\gets S\cup\{T\}$
+  \EndIf
+\EndFor
+\State \Return $S$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection*{Pressure-adaptive admission control}
+
+DBS improves compatibility but cannot by itself prevent queue growth when offered load exceeds sustainable service capacity. PAC therefore computes a normalized pressure signal. Let $Q_t$ be the waiting-queue length, $Q_{\max}$ the normal queue limit, $Q_{\mathrm{pa}}$ the pressure-control admission limit, $W_t$ the recent mean queueing delay, and $H_t$ the maximum pending-writer backlog for a hotspot key. Define
+
+\begin{equation}
+I_t =
+\begin{cases}
+1, & Q_t\ge Q_{\mathrm{pa}},\\
+0, & Q_t<Q_{\mathrm{pa}},
+\end{cases}
+\end{equation}
+
+and
+
+\begin{equation}
+P_t=\max\left(
+\frac{Q_t}{\theta_qQ_{\max}},
+\frac{W_t}{\theta_w},
+I_t\frac{H_t}{\theta_h}
+\right).
+\label{eq:pressure}
+\end{equation}
+
+The prototype uses $Q_{\max}=500$, $Q_{\mathrm{pa}}=128$, $\theta_q=0.3$, $\theta_w=2000$ ms, and $\theta_h=8$. These values are treated as operating-point parameters rather than as a claimed optimum; the evaluation later varies them to test whether the observed gain depends on one threshold setting. When $P_t\ge1$, PAC enters pressure-control mode and uses the smaller admission window. If the queue is full or a hotspot backlog remains excessive, the request is rejected before Fabric submission. A queued transaction that exceeds its deadline is reported as a queue timeout.
+
+\begin{algorithm}[ht]
+\caption{PAC: pressure-adaptive admission}
+\label{alg:pac}
+\begin{algorithmic}[1]
+\Require Request $r$; queue length $Q_t$; recent queueing delay $W_t$; hotspot backlog $H_t$
+\Ensure Admit $r$ to ACG/DBS, or reject before Fabric submission
+\State compute $P_t$ using Eq.~\eqref{eq:pressure}
+\If{$Q_t\ge Q_{\max}$}
+  \State \Return admission reject
+\EndIf
+\If{$P_t<1$}
+  \State \Return admit
+\EndIf
+\If{$Q_t\ge Q_{\mathrm{pa}}$ \textbf{or} $H_t>\theta_h$}
+  \State \Return admission reject
+\Else
+  \State \Return admit under pressure-control mode
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+\begin{figure*}[ht]
+\centering
+\includegraphics[width=0.94\textwidth]{fig3_pressure_favorite_vector.png}
+\caption{Pressure function and admission-mode switching. The queue term, recent queueing delay, and gated hotspot backlog determine the normalized pressure $P_t$. CAPS tightens admission when $P_t\ge1$ and applies explicit backpressure if overload persists.}
+\label{fig:pressure}
+\end{figure*}
+
+\subsection*{Operating-point objective}
+
+CAPS is not designed to maximize one metric in isolation. For interactive supply-chain services, a scheduler should preserve ledger progress while avoiding unbounded waiting and excessive retry traffic. We therefore interpret the default CAPS configuration through a constrained utility:
+
+\begin{equation}
+\max \; U
+= C
+- \lambda_r R
+- \lambda_t T
+- \lambda_l \max(0,L/L_{\mathrm{slo}}-1),
+\quad
+\mathrm{s.t.}\; M=0,
+\label{eq:operating-objective}
+\end{equation}
+
+where $C$ is the committed-transaction count, $R$ is the admission-rejection count, $T$ is the queue-timeout count, $L$ is mean client-observed latency, $L_{\mathrm{slo}}$ is an application latency target, and $M$ is the MVCC-invalid count. The weights $\lambda_r$, $\lambda_t$, and $\lambda_l$ encode application policy. A latency-critical monitoring service may choose a high $\lambda_l$ and prefer aggressive early rejection, whereas an inventory-transfer service may assign a higher cost to retry traffic and prefer retaining compatible work. In this paper, CAPS is evaluated as a default operating point for supply-chain coordination: it should keep $M=0$, keep latency bounded, and then maximize committed ledger work without becoming either a long queue or an admission filter that rejects most compatible work.
+
+\subsection*{Safety, deadlock freedom, and liveness}
+
+\paragraph{Conflict safety.}
+Before two transactions become active concurrently, ACG verifies Eq.~\eqref{eq:compatibility} against active transactions and the batch under construction. If Eq.~\eqref{eq:prediction-contract} holds, any actual read--write or write--write overlap would imply a corresponding predicted overlap, and ACG would not activate the two transactions together. Therefore, within one CAPS scheduler, two concurrently submitted transactions cannot have an actual write--write or read--write overlap under conservative prediction. The guarantee is conditional: underprediction can reintroduce Fabric MVCC invalidations, while overprediction preserves safety but reduces the set of transactions that can run together.
+
+\paragraph{Deadlock freedom.}
+A waiting transaction owns no active key. A transaction acquires its full predicted access set atomically only after all keys are available. Consequently, the scheduler has no hold-and-wait condition and cannot form a circular wait among queued transactions.
+
+\paragraph{Conditional liveness.}
+Under finite offered load and the assumption that every Fabric submission eventually returns, the aging term increases without bound relative to the fixed conflict, hotspot, and position penalties. Thus, a queued transaction that remains eligible will eventually dominate younger alternatives. Under sustained overload, CAPS may reject a request before it joins the queue. This is deliberate admission control, not starvation of an accepted task. Queue deadlines additionally prevent indefinite residence.
+
+\section*{Materials and Methods}
+
+\subsection*{Prototype implementation}
+
+The scheduler is implemented as a Node.js HTTP service between the workload generator and the Fabric Gateway SDK \citep{fabric25gateway}. It exposes \texttt{/submit} for transaction requests, \texttt{/metrics} for experimental measurements, and \texttt{/reset} to clear runtime state before each run. We implemented Traditional Lock, VLL-only, ACG+DBS, ACG+PAC, complete CAPS, ED-MVCC-Reimpl, and DRT-Reimpl variants.
+
+\subsection*{Mechanism-level related-work baselines}
+
+The related-work baselines are not compared by importing published throughput numbers, because prior Fabric studies differ in hardware, Fabric version, chaincode semantics, endorsement policy, client implementation, and workload mix. Instead, we follow a common evaluation style in Fabric performance and application papers: a real containerized Fabric network is driven by benchmark or SDK clients that generate synthetic domain transactions, and throughput, latency, and failure outcomes are measured under controlled offered load \citep{dinh2017blockbench,thakkar2018performance,caliperdocs,chen2023tea,dash2024hcsrl,keo2025rubber}. In other words, the baselines answer a mechanism question under the same environment: what happens if the same external submission layer implements early conflict detection or dependency-oriented reordering rather than CAPS?
+
+Table~\ref{tab:baseline-scope} defines the implementation scope. All scheduler variants share the same chaincode, access-set extractor, Fabric Gateway path, logical-client workload generator, offered-load schedule, endorsement configuration, queue limit, active-submission limit, and ten-repetition protocol. No related-work baseline was retuned separately for a particular workload after these shared parameters were fixed. This makes the comparison conservative in different directions: ED-MVCC-Reimpl is allowed to obtain low latency by rejecting conflicts before Fabric submission, while DRT-Reimpl is allowed to retain accepted work and reorder it without pressure-adaptive shedding. The admission accounting table therefore reports generated, submitted, committed, rejected, and timed-out requests rather than only successful commits.
+
+\begin{table*}[ht]
+\centering
+\small
+\caption{Scope of related-work-inspired mechanism baselines. These baselines reproduce the central scheduling idea under the same external Fabric submission layer; they are not source-level reproductions of the original systems.}
+\label{tab:baseline-scope}
+\begin{tabularx}{\textwidth}{@{}p{0.15\textwidth}p{0.31\textwidth}p{0.25\textwidth}X@{}}
+\toprule
+Baseline & Implemented mechanism & Shared controls & Original-system capabilities not covered \\
+\midrule
+ED-MVCC-Reimpl & Maintains predicted read/write sets for pending and active requests. A new request is rejected before Fabric submission when it has a read-after-write, write-after-read, or write-after-write overlap with a pending request. & Same access-set prediction, chaincode, Gateway SDK, client generator, 100 logical clients, offered loads, queue limit 500, active-submission limit 32, and ten repetitions. & Does not modify Fabric peer validation, MVCC metadata, endorsement simulation, ordering, or block validation, and does not observe Fabric's internal version state after a proposal enters the Gateway. It represents early conflict detection at the submission layer only. \\
+DRT-Reimpl & Maintains a bounded waiting window and computes a dependency/conflict score from predicted write-set overlap. It selects compatible candidates with an age term, conflict penalty, and position penalty. & Same access-set prediction, chaincode, Gateway SDK, client generator, queue limit 500, active-submission limit 32, candidate window 256, and ten repetitions. PAC is disabled. & Does not implement an orderer-integrated dependency graph, block-construction algorithm, peer-side validation change, or global scheduler inside Fabric. It represents dependency-oriented reordering at the submission layer only. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\subsection*{Fabric environment}
+
+Experiments run on a real Fabric container network hosted in WSL2 and Docker Desktop. The network contains four peers and one Raft orderer. The channel is \texttt{vllchannel}, and the hotspot chaincode is \texttt{hotkey}. One hundred logical clients send requests at a configured offered load.
+
+Although all Fabric components are real, the deployment is single-host and containerized. It therefore includes endorsement, ordering, validation, and commit-confirmation costs but does not reproduce cross-machine network variability. This limitation is discussed explicitly later.
+
+\subsection*{Controlled microbenchmark workload}
+
+The main W3 workload uses three chaincode functions with the following proportions: \texttt{Transfer} (70\%), \texttt{AuditAccounts} (20\%), and \texttt{BatchTransfer} (10\%). Unless stated otherwise, the account space contains 1,000 accounts, the hot-account set contains 100 accounts, each batch transfer contains two sub-transfers, and each audit reads eight accounts.
+
+W3 is retained as a controlled microbenchmark because it isolates contention, queueing, and module effects across Experiments 1--6. It should not be interpreted as a complete industry application.
+
+\subsection*{Supply-chain application workload}
+
+To validate the target domain, we extend the chaincode with warehouse inventory and product-batch state. SC-W1 combines 80\% uniformly distributed inventory transfers with 20\% uniform audits. SC-W2 uses the same operation mix but draws popular SKUs from a truncated Zipf distribution with $\alpha=1.2$. SC-W3 models central-warehouse distribution: 60\% single inventory transfers, 20\% four-operation batch distributions, 15\% hotspot inventory audits, and 5\% batch-state updates. The default state contains 20 warehouses, 50 SKUs, 10 hot SKUs, and 10,000 product batches.
+
+Every supply-chain run checks two application invariants. No warehouse-SKU quantity may become negative, and the total quantity of each SKU must be conserved:
+
+\begin{equation}
+\sum_{w\in\mathcal{W}} I(w,k)=|\mathcal{W}|\,I_0(k),\qquad I(w,k)\ge0.
+\label{eq:inventory-invariant}
+\end{equation}
+
+The formal supply-chain matrix compares Native Fabric, Traditional Lock, ED-MVCC-Reimpl, and CAPS at 300 and 500 tx/s, with ten repetitions for every workload--method--rate configuration. The repeated matrix contains 240 runs. All 240 invariant checks passed: no warehouse-SKU quantity became negative and all SKU totals were conserved. During data cleaning, runs produced before the read-only audit locking fix and before the scheduler-idle check were archived separately and excluded from the formal matrix.
+
+\begin{table}[ht]
+\centering
+\caption{Default experimental configuration.}
+\label{tab:setup}
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+Item & Configuration \\
+\midrule
+Fabric network & Four peers, one Raft orderer, one application channel \\
+Client workload & 100 logical clients; fixed-rate request generation \\
+Chaincode & \texttt{hotkey}: account microbenchmark and supply-chain inventory/batch operations \\
+Default account space & 1,000 accounts, including 100 hot accounts \\
+W3 operation mix & 70\% transfer, 20\% audit, 10\% batch transfer \\
+Supply-chain state & 20 warehouses, 50 SKUs, 10 hot SKUs, 10,000 product batches \\
+Supply-chain matrix & SC-W1, SC-W2, SC-W3; 300 and 500 tx/s; 10 repetitions \\
+Scheduler limits & Queue limit 500; pressure-control limit 128; candidate window 256 \\
+Primary offered load & 100--500 tx/s \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection*{Metrics}
+
+We distinguish system metrics from HTTP implementation codes:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Offered load} is the configured request-generation rate in tx/s.
+  \item \textbf{Generated transactions} are all client requests produced during the measurement window.
+  \item \textbf{Fabric-submitted transactions} are requests that pass admission control and are forwarded to the Fabric Gateway. For Native Fabric, every generated request is submitted.
+  \item \textbf{Committed transactions} are requests for which the client receives a Fabric commit confirmation during the measurement.
+  \item \textbf{Commit ratio} is committed transactions divided by generated transactions.
+  \item \textbf{Goodput} is the number of committed ledger transactions per second.
+  \item \textbf{MVCC-invalid transactions} have entered Fabric but fail read-version validation.
+  \item \textbf{Admission-rejected transactions} are actively shed by the scheduler before Fabric submission; the prototype reports them with HTTP status code 429 (Too Many Requests).
+  \item \textbf{Queue-timeout transactions} exceed the scheduler deadline; the prototype represents them with HTTP 408.
+  \item \textbf{End-to-end latency} covers request submission through completion as observed by the client.
+  \item \textbf{Queueing delay} is the time spent waiting inside the external scheduler.
+\end{itemize}
+
+\subsection*{Evaluation design}
+
+The evaluation is organized around one primary application study and a smaller set of supporting studies. The primary study is the supply-chain matrix, which directly matches the paper's target setting: inventory transfer, batch distribution, batch-state update, and audit transactions. The supporting studies are not meant to be additional application claims. They serve three narrower purposes: isolating the effect of load and hotspot concentration, checking whether each CAPS module contributes to the result, and positioning CAPS against early-detection and dependency-reordering baselines.
+
+Table~\ref{tab:evaluation-design} summarizes this structure. This presentation follows the convention of systems papers that separate the main workload result from mechanism and robustness evidence.
+
+\begin{table*}[ht]
+\centering
+\small
+\caption{Evaluation design. The supply-chain matrix is the primary evidence; controlled microbenchmarks are used only to explain mechanism and boundaries.}
+\label{tab:evaluation-design}
+\begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}p{0.25\textwidth}p{0.14\textwidth}X@{}}
+\toprule
+Study & Workload & Repetitions & Purpose \\
+\midrule
+Supply-chain matrix & SC-W1, SC-W2, SC-W3 at 300/500 tx/s & 10 per setting & Main application-level evidence for inventory, batch, and audit transactions \\
+Load and contention checks & W3 hotspot microbenchmark & 10 per setting & Show that CAPS benefits are associated with overload and hotspot conflict rather than a single supply-chain trace \\
+Module ablation & W3 at 300/500 tx/s & 10 per setting & Separate the effects of conflict guarding, dependency-aware scheduling, and pressure-adaptive admission \\
+Configuration checks & W3 with endorsement/block settings & 10 per setting & Check whether benefits persist across common settings and identify block-cutting boundary cases \\
+PAC parameter sensitivity & W3 at 300/500 tx/s & 10 per setting & Vary queue, admission, delay, and hotspot thresholds to test whether CAPS depends on one preliminary parameter choice \\
+Related-work baselines & W3 at 300/500 tx/s & 10 per setting & Compare against early conflict detection and dependency-reordering mechanisms \\
+Scheduler overhead & Account-W3 at 300/500 tx/s & 10 per setting & Quantify CAPS CPU use, memory footprint, and admission/scheduling decision time \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\section*{Results}
+
+\subsection*{Supply-chain transaction workloads}
+
+Figures~\ref{fig:supplychain-performance} and~\ref{fig:supplychain-cost} report the formal supply-chain matrix. Each bar reports the mean over ten repetitions, and error bars show one standard deviation. The workload difficulty increases from SC-W1 to SC-W3. SC-W1 distributes inventory transfers and audits relatively uniformly. SC-W2 concentrates requests on hot SKUs. SC-W3 adds central-warehouse distribution, four-operation batch transfers, hotspot audits, and batch-state updates. This ordering allows the evaluation to separate ordinary supply-chain traffic from increasingly concentrated contention. In Figure~\ref{fig:supplychain-cost}, latency is plotted on a logarithmic scale because client-observed latency spans more than two orders of magnitude. The admission panel normalizes generated requests into committed transactions, MVCC-invalid transactions, admission rejections, queue timeouts, and other client-side failures.
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{fig4a_supply_chain_performance_nature.png}
+\caption{Supply-chain performance.}
+\label{fig:supplychain-performance}
+\end{figure*}
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{fig4b_supply_chain_latency_cost_nature.png}
+\caption{Latency and admission outcomes.}
+\label{fig:supplychain-cost}
+\end{figure*}
+
+\FloatBarrier
+
+\begin{table*}[ht]
+\centering
+\small
+\caption{CAPS versus Traditional Lock.}
+\label{tab:supplychain-caps}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llrrrrrrr@{}}
+\toprule
+Workload & Load & CAPS commits & 95\% CI & Lock commits & Commit gain & CAPS latency & 95\% CI & Latency reduction \\
+ & (tx/s) &  &  &  &  & (ms) &  &  \\
+\midrule
+SC-W1 & 300 & 4,334.2 $\pm$ 378.6 & $\pm$ 234.6 & 2,153.8 $\pm$ 59.5 & 101.2\% & 684.3 $\pm$ 222.6 & $\pm$ 138.0 & 65.3\% \\
+SC-W1 & 500 & 4,392.0 $\pm$ 342.2 & $\pm$ 212.1 & 2,148.4 $\pm$ 22.0 & 104.4\% & 570.2 $\pm$ 288.8 & $\pm$ 179.0 & 52.8\% \\
+SC-W2 & 300 & 4,387.0 $\pm$ 63.4 & $\pm$ 39.3 & 1,884.0 $\pm$ 46.6 & 132.9\% & 540.7 $\pm$ 10.2 & $\pm$ 6.3 & 92.8\% \\
+SC-W2 & 500 & 4,313.2 $\pm$ 42.2 & $\pm$ 26.2 & 1,882.0 $\pm$ 30.2 & 129.2\% & 358.2 $\pm$ 14.1 & $\pm$ 8.7 & 92.2\% \\
+SC-W3 & 300 & 2,609.2 $\pm$ 26.5 & $\pm$ 16.4 & 778.9 $\pm$ 15.1 & 235.0\% & 205.6 $\pm$ 5.8 & $\pm$ 3.6 & 89.2\% \\
+SC-W3 & 500 & 3,562.8 $\pm$ 81.8 & $\pm$ 50.7 & 822.9 $\pm$ 19.5 & 333.0\% & 180.6 $\pm$ 15.4 & $\pm$ 9.5 & 84.3\% \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+\begin{table*}[ht]
+\centering
+\scriptsize
+\caption{Complete supply-chain results.}
+\label{tab:supplychain-full}
+\begin{tabularx}{\textwidth}{@{}p{0.09\textwidth}p{0.07\textwidth}Xrrrr@{}}
+\toprule
+Workload & Load & Method & Commits & Goodput & Mean latency & MVCC-invalid \\
+ & (tx/s) & & & (tx/s) & (ms) & \\
+\midrule
+SC-W1 & 300 & Native Fabric & 4,769.3 $\pm$ 169.3 & 127.10 $\pm$ 24.21 & 4,677.4 $\pm$ 1,693.2 & 1,065.5 $\pm$ 166.1 \\
+SC-W1 & 300 & ED-MVCC-Reimpl & 4,458.2 $\pm$ 349.9 & 203.30 $\pm$ 19.18 & 275.9 $\pm$ 138.6 & 0.0 $\pm$ 0.0 \\
+SC-W1 & 300 & Traditional Lock & 2,153.8 $\pm$ 59.5 & 72.66 $\pm$ 2.83 & 1,970.3 $\pm$ 21.9 & 0.0 $\pm$ 0.0 \\
+SC-W1 & 300 & CAPS & 4,334.2 $\pm$ 378.6 & 192.64 $\pm$ 24.33 & 684.3 $\pm$ 222.6 & 0.0 $\pm$ 0.0 \\
+\addlinespace
+SC-W1 & 500 & Native Fabric & 8,124.3 $\pm$ 558.9 & 108.91 $\pm$ 26.55 & 15,281.6 $\pm$ 2,403.1 & 1,534.0 $\pm$ 643.7 \\
+SC-W1 & 500 & ED-MVCC-Reimpl & 4,725.6 $\pm$ 303.9 & 207.05 $\pm$ 15.70 & 389.7 $\pm$ 159.2 & 0.0 $\pm$ 0.0 \\
+SC-W1 & 500 & Traditional Lock & 2,148.4 $\pm$ 22.0 & 73.02 $\pm$ 2.60 & 1,207.8 $\pm$ 6.1 & 0.0 $\pm$ 0.0 \\
+SC-W1 & 500 & CAPS & 4,392.0 $\pm$ 342.2 & 187.77 $\pm$ 20.96 & 570.2 $\pm$ 288.8 & 0.0 $\pm$ 0.0 \\
+\addlinespace
+SC-W2 & 300 & Native Fabric & 2,566.7 $\pm$ 233.2 & 74.67 $\pm$ 13.08 & 3,522.7 $\pm$ 1,222.4 & 3,119.9 $\pm$ 267.5 \\
+SC-W2 & 300 & ED-MVCC-Reimpl & 3,153.2 $\pm$ 28.3 & 144.67 $\pm$ 4.62 & 42.6 $\pm$ 1.4 & 0.0 $\pm$ 0.0 \\
+SC-W2 & 300 & Traditional Lock & 1,884.0 $\pm$ 46.6 & 8.24 $\pm$ 0.37 & 7,530.9 $\pm$ 362.3 & 0.0 $\pm$ 0.0 \\
+SC-W2 & 300 & CAPS & 4,387.0 $\pm$ 63.4 & 163.36 $\pm$ 4.12 & 540.7 $\pm$ 10.2 & 0.0 $\pm$ 0.0 \\
+\addlinespace
+SC-W2 & 500 & Native Fabric & 5,204.0 $\pm$ 219.4 & 81.34 $\pm$ 14.56 & 14,462.5 $\pm$ 2,214.5 & 4,025.0 $\pm$ 142.9 \\
+SC-W2 & 500 & ED-MVCC-Reimpl & 3,824.5 $\pm$ 114.3 & 178.58 $\pm$ 9.80 & 53.3 $\pm$ 5.3 & 0.0 $\pm$ 0.0 \\
+SC-W2 & 500 & Traditional Lock & 1,882.0 $\pm$ 30.2 & 8.12 $\pm$ 0.26 & 4,577.0 $\pm$ 178.9 & 0.0 $\pm$ 0.0 \\
+SC-W2 & 500 & CAPS & 4,313.2 $\pm$ 42.2 & 161.44 $\pm$ 1.69 & 358.2 $\pm$ 14.1 & 0.0 $\pm$ 0.0 \\
+\addlinespace
+SC-W3 & 300 & Native Fabric & 1,715.5 $\pm$ 28.5 & 44.68 $\pm$ 3.79 & 4,075.6 $\pm$ 359.8 & 3,998.1 $\pm$ 90.4 \\
+SC-W3 & 300 & ED-MVCC-Reimpl & 1,741.3 $\pm$ 28.9 & 79.04 $\pm$ 1.33 & 28.0 $\pm$ 0.5 & 35.4 $\pm$ 40.5 \\
+SC-W3 & 300 & Traditional Lock & 778.9 $\pm$ 15.1 & 29.61 $\pm$ 0.92 & 1,902.0 $\pm$ 17.5 & 0.0 $\pm$ 0.0 \\
+SC-W3 & 300 & CAPS & 2,609.2 $\pm$ 26.5 & 86.32 $\pm$ 10.00 & 205.6 $\pm$ 5.8 & 0.0 $\pm$ 0.0 \\
+\addlinespace
+SC-W3 & 500 & Native Fabric & 3,381.6 $\pm$ 51.2 & 53.40 $\pm$ 5.34 & 14,212.0 $\pm$ 545.9 & 5,826.6 $\pm$ 58.8 \\
+SC-W3 & 500 & ED-MVCC-Reimpl & 2,695.1 $\pm$ 26.7 & 122.29 $\pm$ 1.31 & 25.9 $\pm$ 4.3 & 0.0 $\pm$ 0.0 \\
+SC-W3 & 500 & Traditional Lock & 822.9 $\pm$ 19.5 & 31.69 $\pm$ 1.28 & 1,147.7 $\pm$ 7.3 & 0.0 $\pm$ 0.0 \\
+SC-W3 & 500 & CAPS & 3,562.8 $\pm$ 81.8 & 120.27 $\pm$ 5.24 & 180.6 $\pm$ 15.4 & 0.0 $\pm$ 0.0 \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\begin{table*}[ht]
+\centering
+\scriptsize
+\caption{Admission and completion accounting.}
+\label{tab:supplychain-admission}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llrrrrrrr@{}}
+\toprule
+Workload & Load & Method & Generated & Fabric-submitted & Commits & Commit ratio & Admission rejected & Queue timeout \\
+ & (tx/s) & & & & & & & \\
+\midrule
+SC-W1 & 300 & Native Fabric & 6,000 & 6,000.0 & 4,769.3 & 79.5\% & 0.0 (0.0\%) & 0.0 (0.0\%) \\
+SC-W1 & 300 & ED-MVCC & 6,000 & 4,458.2 & 4,458.2 & 74.3\% & 1,541.8 (25.7\%) & 0.0 (0.0\%) \\
+SC-W1 & 300 & Trad. Lock & 6,000 & 2,153.8 & 2,153.8 & 35.9\% & 3,846.2 (64.1\%) & 0.0 (0.0\%) \\
+SC-W1 & 300 & CAPS & 6,000 & 4,335.0 & 4,334.2 & 72.2\% & 1,665.0 (27.8\%) & 0.0 (0.0\%) \\
+\addlinespace
+SC-W1 & 500 & Native Fabric & 10,000 & 10,000.0 & 8,124.3 & 81.2\% & 0.0 (0.0\%) & 0.0 (0.0\%) \\
+SC-W1 & 500 & ED-MVCC & 10,000 & 4,725.6 & 4,725.6 & 47.3\% & 5,274.4 (52.7\%) & 0.0 (0.0\%) \\
+SC-W1 & 500 & Trad. Lock & 10,000 & 2,148.4 & 2,148.4 & 21.5\% & 7,851.6 (78.5\%) & 0.0 (0.0\%) \\
+SC-W1 & 500 & CAPS & 10,000 & 4,394.7 & 4,392.0 & 43.9\% & 5,605.3 (56.1\%) & 0.0 (0.0\%) \\
+\addlinespace
+SC-W2 & 300 & Native Fabric & 6,000 & 6,000.0 & 2,566.7 & 42.8\% & 0.0 (0.0\%) & 0.0 (0.0\%) \\
+SC-W2 & 300 & ED-MVCC & 6,000 & 3,153.3 & 3,153.2 & 52.6\% & 2,846.7 (47.4\%) & 0.0 (0.0\%) \\
+SC-W2 & 300 & Trad. Lock & 6,000 & 1,884.0 & 1,884.0 & 31.4\% & 4,116.0 (68.6\%) & 0.0 (0.0\%) \\
+SC-W2 & 300 & CAPS & 6,000 & 4,387.0 & 4,387.0 & 73.1\% & 1,613.0 (26.9\%) & 0.0 (0.0\%) \\
+\addlinespace
+SC-W2 & 500 & Native Fabric & 10,000 & 10,000.0 & 5,204.0 & 52.0\% & 0.0 (0.0\%) & 0.0 (0.0\%) \\
+SC-W2 & 500 & ED-MVCC & 10,000 & 3,824.5 & 3,824.5 & 38.2\% & 6,175.5 (61.8\%) & 0.0 (0.0\%) \\
+SC-W2 & 500 & Trad. Lock & 10,000 & 1,882.1 & 1,882.0 & 18.8\% & 8,117.9 (81.2\%) & 0.0 (0.0\%) \\
+SC-W2 & 500 & CAPS & 10,000 & 4,313.2 & 4,313.2 & 43.1\% & 5,686.8 (56.9\%) & 0.0 (0.0\%) \\
+\addlinespace
+SC-W3 & 300 & Native Fabric & 6,000 & 6,000.0 & 1,715.5 & 28.6\% & 0.0 (0.0\%) & 0.0 (0.0\%) \\
+SC-W3 & 300 & ED-MVCC & 6,000 & 1,776.9 & 1,741.3 & 29.0\% & 4,223.1 (70.4\%) & 0.0 (0.0\%) \\
+SC-W3 & 300 & Trad. Lock & 6,000 & 779.2 & 778.9 & 13.0\% & 3,486.3 (58.1\%) & 1,734.5 (28.9\%) \\
+SC-W3 & 300 & CAPS & 6,000 & 2,609.2 & 2,609.2 & 43.5\% & 3,390.8 (56.5\%) & 0.0 (0.0\%) \\
+\addlinespace
+SC-W3 & 500 & Native Fabric & 10,000 & 10,000.0 & 3,381.6 & 33.8\% & 0.0 (0.0\%) & 0.0 (0.0\%) \\
+SC-W3 & 500 & ED-MVCC & 10,000 & 2,695.1 & 2,695.1 & 27.0\% & 7,304.9 (73.0\%) & 0.0 (0.0\%) \\
+SC-W3 & 500 & Trad. Lock & 10,000 & 822.9 & 822.9 & 8.2\% & 7,426.0 (74.3\%) & 1,751.1 (17.5\%) \\
+SC-W3 & 500 & CAPS & 10,000 & 3,563.0 & 3,562.8 & 35.6\% & 6,437.0 (64.4\%) & 0.0 (0.0\%) \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+CAPS consistently commits more useful supply-chain transactions than Traditional Lock. The gain is stable in SC-W1, where CAPS increases committed transactions by 101.2\%--104.4\%. The effect becomes larger when contention follows the application structure. In SC-W2, CAPS increases committed transactions by 129.2\%--132.9\% and reduces client-observed latency by more than 92\%. In SC-W3, CAPS commits 2,609.2 transactions at 300 tx/s and 3,562.8 transactions at 500 tx/s, compared with 778.9 and 822.9 for Traditional Lock. The corresponding commit gains are 235.0\% and 333.0\%. These results show that CAPS preserves valid ledger progress under hotspot overload rather than merely reducing the number of submitted requests.
+
+The main CAPS--Traditional Lock differences are also large relative to repeated-run variability. Across the six supply-chain settings in Table~\ref{tab:supplychain-caps}, the smallest commit-count gap is 1,830.3 transactions and the smallest latency gap is 637.6 ms. These gaps are well outside the reported standard deviations and 95\% confidence intervals, so the main conclusion does not depend on a single noisy repetition.
+
+Table~\ref{tab:supplychain-admission} makes the admission trade-off explicit. In the formal supply-chain matrix, generated requests were either submitted to Fabric, rejected by admission control, or timed out in the scheduler queue; no additional locally dropped requests were recorded. Native Fabric submits every generated request and exposes conflicts as validation waste. ED-MVCC-Reimpl achieves low latency by rejecting predicted conflicts before Fabric submission. Its admission-rejection rate reaches 70.4\% at SC-W3/300 tx/s and 73.0\% at SC-W3/500 tx/s. Traditional Lock also rejects heavily under overload and, in SC-W3, converts many generated requests into queue timeouts. CAPS also rejects under pressure, but more generated requests become committed ledger work. In SC-W3, its commit ratio is 43.5\% at 300 tx/s and 35.6\% at 500 tx/s, compared with 29.0\% and 27.0\% for ED-MVCC-Reimpl and 13.0\% and 8.2\% for Traditional Lock. The point is therefore not that admission rejection is avoided. CAPS uses admission rejection earlier and more selectively to reduce conflict waste and keep queueing delay bounded.
+
+The Native Fabric results show why submission-layer conflict control matters. Native Fabric sometimes commits many requests, especially in SC-W1, but it also creates substantial validation waste. Mean MVCC-invalid counts reach 1,065.5--1,534.0 in SC-W1, 3,119.9--4,025.0 in SC-W2, and 3,998.1--5,826.6 in SC-W3. CAPS records zero observed MVCC-invalid transactions in all formal supply-chain runs. ED-MVCC-Reimpl shows the opposite trade-off. Early conflict rejection can produce very low client latency, especially in SC-W2 and SC-W3, but it commits fewer transactions than CAPS when the waiting window contains compatible work that can still be submitted safely.
+
+The small nonzero ED-MVCC-Reimpl value at SC-W3/300 tx/s should be interpreted as a boundary of the mechanism-level external reimplementation rather than as an access-set extraction failure. The raw runs show 35.4 $\pm$ 40.5 MVCC-invalid transactions, or about 0.59\% of generated requests; five of the ten repetitions had zero such failures. The extractor covers the declared keys of \texttt{TransferInventory}, \texttt{BatchTransferInventory}, \texttt{UpdateBatchStatus}, and \texttt{AuditInventory}. The residual invalidations arise from the timing boundary between the external pending set and Fabric's internal validation pipeline. ED-MVCC-Reimpl reserves predicted keys while a request is pending, rejects later requests that overlap that pending set, and releases the keys when the Fabric Gateway submission call returns. However, the external release point is not identical to a globally visible peer-side validation boundary. A submitted transaction may already have been endorsed and ordered, while another client request that was released by the external baseline can still be simulated against a peer state whose commit visibility and validation order do not match the baseline's pending-set state. In SC-W3, central-warehouse transfers and batch transfers repeatedly touch the same hot inventory keys, so this small release/validation race can occasionally leave two transactions whose predicted sets were not simultaneously pending in ED-MVCC-Reimpl but whose Fabric read versions still conflict at validation. Complete CAPS avoids this particular residual path in our runs because it keeps active reservations until the submit path finishes under the compatible-batch scheduler and uses pressure admission to reduce the number of overlapping hot-key submissions in flight. We therefore report the ED-MVCC residual invalidations explicitly as a synchronization-boundary effect of an external early-detection baseline, not as evidence that ED-MVCC-style designs cannot eliminate conflicts when integrated inside Fabric's validation path.
+
+\FloatBarrier
+
+\subsection*{Supporting mechanism and robustness evidence}
+
+The remaining experiments are reported as supporting evidence rather than as separate application-level claims. They answer four questions: whether the observed gain follows from offered load and contention, whether each CAPS module has a measurable role, how the result changes under common Fabric configuration and PAC-threshold perturbations, and how CAPS compares with related-work-inspired baselines. Table~\ref{tab:supporting-evidence} now serves only as a map of the supporting studies; the ablation, configuration checks, and PAC sensitivity results are reported in separate tables to keep the evidence readable.
+
+\begin{table*}[ht]
+\centering
+\small
+\caption{Supporting experiments.}
+\label{tab:supporting-evidence}
+\begin{tabularx}{\textwidth}{@{}p{0.19\textwidth}p{0.24\textwidth}X@{}}
+\toprule
+Question & Setting & Where reported \\
+\midrule
+Contention sensitivity & W3, 300 tx/s, hot=20--500 & Commit gains increase once the hotspot set is large enough to leave compatible work in the window; hot=20 represents an extreme-overload setting. \\
+Module ablation & W3, 300/500 tx/s & Table~\ref{tab:ablation-detail} separates conflict guarding, batch selection, and pressure-adaptive admission. \\
+Configuration checks & Endorsement and block-cutting variants & Table~\ref{tab:robustness-detail} reports commit and latency results against Traditional Lock, including the B50 low-throughput boundary. \\
+PAC parameter sensitivity & Strict, default, and relaxed thresholds & Table~\ref{tab:pac-sensitivity} reports the throughput--latency trade-off under threshold perturbation. \\
+Related-work baselines & W3, 300/500 tx/s & ED-MVCC-Reimpl and DRT-Reimpl are discussed with admission accounting and baseline-scope controls. \\
+Scheduler overhead & Account-W3, 300/500 tx/s & Tables~\ref{tab:scheduler-overhead} and~\ref{tab:scheduler-overhead-sensitivity} report process CPU use, resident memory, scheduling decision latency, and sensitivity to scheduler parameters. \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+The overhead study uses Account-W3 rather than the supply-chain chaincode to isolate the scheduler cost from application-specific initialization and ledger-state effects. CAPS observes predicted read and write sets; its admission, compatibility checking, and DBS batch selection depend on the number and overlap of keys, the active-submission limit, the candidate window, and the waiting queue, not on whether a key denotes an account, an inventory item, or a batch record. The scheduler therefore sees access-set cardinality and overlap, not semantic key names. Supply-chain overhead is expected to be similar only when the access-set sizes, conflict overlap, and queue pressure are comparable. Account-W3 retains the mixed transfer, batch-transfer, and read-only audit structure used by the main workloads while allowing repeated parameter sweeps without reinitializing a supply-chain ledger.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Scheduler overhead.}
+\label{tab:scheduler-overhead}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Workload & Load & Commits & Scheduling avg (ms) & Scheduling P95 (ms) & CPU avg (\%) & RSS avg (MB) & RSS max (MB) \\
+\midrule
+Account-W3 & 300 tx/s & 3,801.3$\pm$216.9 & 0.5706$\pm$0.0412 & 2.6728$\pm$0.1880 & 77.38$\pm$5.90 & 168.93$\pm$6.00 & 180.05$\pm$5.53 \\
+Account-W3 & 500 tx/s & 4,410.0$\pm$269.1 & 0.4129$\pm$0.0151 & 2.2336$\pm$0.0452 & 77.12$\pm$4.39 & 189.12$\pm$8.55 & 207.04$\pm$15.89 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table*}[ht]
+\centering
+\small
+\caption{Scheduler-overhead sensitivity. Scheduling times are mean $\pm$ standard deviation; queue and CPU columns report means.}
+\label{tab:scheduler-overhead-sensitivity}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+Setting & $A_{\max}$ & Window & Hot keys & Queue avg & Queue max & Scheduling avg (ms) & Scheduling P95 (ms) & CPU avg (\%) \\
+\midrule
+Low active limit & 16 & 256 & 100 & 120.04 & 150.0 & 0.3501$\pm$0.0152 & 1.6244$\pm$0.1264 & 61.01 \\
+Default & 32 & 256 & 100 & 121.19 & 149.9 & 0.4747$\pm$0.0098 & 2.6238$\pm$0.0604 & 76.21 \\
+High pressure & 32 & 256 & 20 & 89.08 & 152.9 & 0.1449$\pm$0.0457 & 0.4319$\pm$0.5742 & 18.25 \\
+Large window & 32 & 512 & 100 & 120.86 & 147.9 & 0.4838$\pm$0.0113 & 2.6892$\pm$0.0666 & 76.58 \\
+Small window & 32 & 64 & 100 & 127.26 & 150.0 & 0.4151$\pm$0.0082 & 2.6815$\pm$0.0526 & 71.77 \\
+High active limit & 64 & 256 & 100 & 145.65 & 171.5 & 0.4928$\pm$0.0156 & 2.7292$\pm$0.1154 & 80.64 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+Tables~\ref{tab:scheduler-overhead} and~\ref{tab:scheduler-overhead-sensitivity} show that the external scheduler is not the dominant source of client-observed latency in the tested environment. Its synchronous scheduling path remains below 0.6 ms on average and below 2.8 ms at the 95th percentile across the tested active-limit and window settings. Increasing the candidate window from 64 to 512 raises average scheduling time only from 0.4151 ms to 0.4838 ms, while increasing the active-submission limit from 16 to 64 keeps average scheduling time below 0.5 ms. Under the more concentrated hot-key setting, pressure admission reduces the amount of runnable work examined, so the measured scheduling path becomes shorter rather than longer.
+
+\FloatBarrier
+
+Figure~\ref{fig:conflict-sensitivity} tests whether the observed gains follow from hotspot contention rather than from a single supply-chain trace. Smaller \texttt{hotAccountCount} values produce more concentrated conflicts. The extreme \texttt{hotAccountCount}=20 setting is a boundary case in which pressure admission reduces accepted volume; once the hotspot set leaves enough compatible work in the waiting window, CAPS commits substantially more transactions than Traditional Lock while keeping latency lower.
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{fig5_conflict_sensitivity_nature.png}
+\caption{Conflict sensitivity.}
+\label{fig:conflict-sensitivity}
+\end{figure*}
+
+\FloatBarrier
+
+Table~\ref{tab:ablation-detail} and Figure~\ref{fig:ablation} separate the effects of access-set guarding, dependency-aware selection, and pressure-adaptive admission. ACG+DBS keeps conflict-safe compatible-batch selection but disables pressure admission, so it shows how much ledger work can be retained when the scheduler is allowed to queue. ACG+PAC keeps conflict guarding and pressure admission but disables DBS, so it represents a low-latency pressure gate. Complete CAPS combines both mechanisms. The ACG+PAC point at 500 tx/s is intentionally strong because aggressive rejection prevents long waiting and quickly admits nonconflicting work. Its weaker 300 tx/s result shows the cost of removing DBS: when pressure is less dominant, the pure gate is less stable at retaining compatible work.
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{fig6_ablation_nature.png}
+\caption{Module ablation.}
+\label{fig:ablation}
+\end{figure*}
+
+\begin{table*}[!htbp]
+\centering
+\small
+\caption{Module ablation.}
+\label{tab:ablation-detail}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Variant & Load & Commits & Admission rejections & Queue timeouts & Mean latency (ms) \\
+\midrule
+Traditional Lock & 300 & 1,890.0$\pm$89.5 & 3,219.3 & 890.5 & 1,865.47$\pm$45.14 \\
+Traditional Lock & 500 & 1,814.7$\pm$67.6 & 7,211.3 & 973.4 & 1,170.78$\pm$12.23 \\
+ACG+DBS & 300 & 5,153.8$\pm$261.0 & 846.2 & 0.0 & 1,628.98$\pm$151.96 \\
+ACG+DBS & 500 & 5,104.0$\pm$344.6 & 4,894.3 & 0.0 & 1,286.25$\pm$135.09 \\
+ACG+PAC & 300 & 3,083.5$\pm$225.1 & 2,916.5 & 0.0 & 98.04$\pm$79.16 \\
+ACG+PAC & 500 & 4,322.9$\pm$62.7 & 5,677.1 & 0.0 & 41.32$\pm$0.81 \\
+CAPS & 300 & 4,643.3$\pm$502.3 & 1,355.1 & 0.0 & 568.80$\pm$76.33 \\
+CAPS & 500 & 3,839.7$\pm$547.6 & 6,160.3 & 0.0 & 625.58$\pm$232.39 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\FloatBarrier
+
+Table~\ref{tab:robustness-detail} reports the configuration checks. Under B5 and B10 block-cutting settings, CAPS retains both commit and latency gains. Under B50, absolute committed volume is low for both schedulers, and the benefit shifts mainly to latency control rather than throughput improvement. Figures~\ref{fig:endorsement-robustness} and~\ref{fig:block-robustness} visualize the corresponding relative gains.
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=0.94\textwidth]{fig7_endorsement_policy_nature.png}
+\caption{Endorsement-policy robustness.}
+\label{fig:endorsement-robustness}
+\end{figure*}
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{fig8_fabric_parameters_nature.png}
+\caption{Block-cutting robustness.}
+\label{fig:block-robustness}
+\end{figure*}
+
+\begin{table*}[!htbp]
+\centering
+\small
+\caption{Configuration robustness.}
+\label{tab:robustness-detail}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+Configuration & Load & CAPS commits & Lock commits & Commit gain & CAPS latency (ms) & Latency reduction \\
+\midrule
+Default endorsement & 300 & 4,002.3$\pm$479.6 & 1,744.9$\pm$116.5 & 129.4\% & 615.98$\pm$99.90 & 67.0\% \\
+Default endorsement & 500 & 3,553.2$\pm$339.1 & 1,788.7$\pm$112.6 & 98.6\% & 694.24$\pm$413.53 & 40.6\% \\
+OR endorsement policy & 300 & 4,062.6$\pm$140.5 & 1,869.5$\pm$102.3 & 117.3\% & 695.52$\pm$64.56 & 62.7\% \\
+OR endorsement policy & 500 & 4,248.7$\pm$250.8 & 1,835.0$\pm$93.8 & 131.5\% & 538.65$\pm$139.16 & 54.3\% \\
+B10, timeout 2s & 300 & 3,581.6$\pm$176.4 & 1,822.6$\pm$52.6 & 96.5\% & 555.32$\pm$16.81 & 70.4\% \\
+B10, timeout 2s & 500 & 4,004.4$\pm$403.7 & 1,824.2$\pm$58.3 & 119.5\% & 345.19$\pm$7.81 & 70.5\% \\
+B5, timeout 1s & 300 & 4,163.7$\pm$147.1 & 2,264.5$\pm$58.5 & 83.9\% & 552.99$\pm$15.95 & 70.0\% \\
+B5, timeout 1s & 500 & 4,184.5$\pm$100.7 & 2,217.7$\pm$43.1 & 88.7\% & 409.47$\pm$38.85 & 64.2\% \\
+B50, timeout 2s & 300 & 370.1$\pm$1.8 & 338.6$\pm$2.2 & 9.3\% & 615.96$\pm$3.60 & 65.3\% \\
+B50, timeout 2s & 500 & 368.5$\pm$4.1 & 340.1$\pm$2.5 & 8.4\% & 374.97$\pm$1.90 & 66.4\% \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+\FloatBarrier
+
+Figure~\ref{fig:related-baselines} compares CAPS with the mechanism-level related-work baselines. ED-MVCC-Reimpl represents early conflict detection, while DRT-Reimpl represents dependency-oriented reordering without pressure-adaptive admission. DRT-Reimpl can commit more transactions than CAPS because it preserves a larger waiting set and continues searching it for dependency-compatible work. That result is meaningful for throughput-oriented deployments, but it is not a direct win under the same latency or service-level objective: the higher commit count is obtained together with longer queueing and higher client-observed latency. The comparison therefore clarifies the main design trade-off: early conflict detection can minimize latency by rejecting aggressively, dependency reordering can retain a larger queue, and CAPS deliberately occupies a middle operating region.
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{fig9_literature_comparison_nature.png}
+\caption{Related-work baselines.}
+\label{fig:related-baselines}
+\end{figure*}
+
+\FloatBarrier
+
+Table~\ref{tab:pac-sensitivity} and Figure~\ref{fig:pac-sensitivity} report the PAC threshold sweep. Strict thresholds lower latency through earlier rejection, whereas relaxed thresholds admit more work but allow longer queues. Across the tested range, CAPS still commits substantially more valid transactions than Traditional Lock and keeps observed MVCC-invalid transactions at zero.
+
+\begin{table*}[!htbp]
+\centering
+\small
+\caption{PAC parameter sensitivity.}
+\label{tab:pac-sensitivity}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+PAC setting & Parameter tuple & Load & Commits & Admission rejections & Mean latency (ms) & Commit gain \\
+\midrule
+Strict & (400, 64, 0.2, 1000, 4) & 300 & 4,012.7$\pm$225.6 & 1,987.3 & 350.68$\pm$38.19 & 97.7\% \\
+Strict & (400, 64, 0.2, 1000, 4) & 500 & 3,925.8$\pm$239.4 & 6,073.8 & 255.94$\pm$53.22 & 99.8\% \\
+Default & (500, 128, 0.3, 2000, 8) & 300 & 3,665.9$\pm$260.9 & 2,333.9 & 635.30$\pm$90.18 & 80.6\% \\
+Default & (500, 128, 0.3, 2000, 8) & 500 & 4,114.2$\pm$190.0 & 5,885.8 & 411.92$\pm$66.17 & 109.4\% \\
+Relaxed & (800, 256, 0.5, 4000, 16) & 300 & 4,242.8$\pm$289.5 & 1,756.0 & 1,018.95$\pm$56.22 & 109.1\% \\
+Relaxed & (800, 256, 0.5, 4000, 16) & 500 & 4,166.5$\pm$267.1 & 5,833.5 & 790.42$\pm$148.72 & 112.1\% \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{fig10_pac_parameter_sensitivity_nature.png}
+\caption{PAC sensitivity.}
+\label{fig:pac-sensitivity}
+\end{figure*}
+
+\FloatBarrier
+
+Taken together, the supporting studies explain why CAPS is used as the default policy rather than ACG+DBS or ACG+PAC alone. ACG+DBS maximizes accepted compatible work and therefore commits more transactions than complete CAPS in the W3 ablation, but it does so by allowing longer queues: mean latency remains 1.63 s at 300 tx/s and 1.29 s at 500 tx/s because no pressure controller limits waiting. ACG+PAC is the opposite operating point. It minimizes latency through aggressive pressure admission and even commits more than complete CAPS at 500 tx/s, but it removes the DBS search that finds additional compatible work. At 300 tx/s, ACG+PAC commits 33.6\% fewer transactions than CAPS, showing that it depends more strongly on a severe pressure regime and does not retain compatible work as consistently across offered loads. Complete CAPS is therefore selected because it avoids the long-queue behavior of ACG+DBS while retaining more compatible work than a pure pressure gate when runnable alternatives exist.
+
+\section*{Discussion}
+
+\subsection*{Where the improvement comes from}
+
+The supply-chain matrix and controlled microbenchmarks point to three mechanisms. First, ACG moves conflict prevention before endorsement and ordering. Every formal CAPS supply-chain run records zero observed MVCC-invalid transactions. Second, DBS reduces the conservative serialization imposed by Traditional Lock. This effect is most visible in SC-W3, where central-warehouse distribution creates frequent conflicts but still leaves compatible batch and audit transactions in the waiting window. Third, PAC turns overload from implicit queue growth into explicit load shedding. The ablation results show that no single component explains the full result.
+
+\subsection*{Goodput, acceptance, and latency}
+
+The offered request rate is not the same as ledger throughput. A scheduler can appear responsive by rejecting most requests, or appear highly accepting while allowing requests to wait for several seconds. For this reason, CAPS is evaluated using committed transactions, goodput, admission rejection, and latency together.
+
+CAPS should be interpreted as a default operating point rather than as a universally dominant policy. ED-MVCC-Reimpl and ACG+PAC can achieve lower latency through immediate rejection. DRT-Reimpl and ACG+DBS can retain more work by allowing a larger waiting set. CAPS targets the region described by Eq.~\eqref{eq:operating-objective}: zero avoidable MVCC invalidations, bounded latency, no queue timeouts, and high committed ledger progress after those constraints are met. The appropriate point depends on whether an application prioritizes acceptance, latency, or retry cost.
+
+\subsection*{Deployment scope}
+
+CAPS targets multi-organization supply chains in which requests name the inventory, warehouse, batch, order, or asset records they will access. Typical examples include warehouse-to-warehouse inventory transfer, concurrent decrement of a popular SKU, batch dispatch or recall, and bounded regulatory audit. These operations create predictable access sets and concentrated contention, which match the scheduler's assumptions.
+
+The deployment boundary is the access-set prediction contract in Eq.~\eqref{eq:prediction-contract}. Underprediction is unsafe: if a transaction reads or writes an undeclared key, ACG may admit another transaction that actually conflicts with it, causing MVCC invalidation or application-level retry even though the predicted sets appeared compatible. This can be detected by comparing predicted keys with endorsement-time read/write sets in a test or shadow-audit mode, by instrumenting chaincode key accesses, and by monitoring unexpected MVCC-invalid transactions under CAPS. A production rollout should make access-set rules part of the chaincode interface through annotations or sidecar declarations, and should use static checks to ensure that all \texttt{GetState} and \texttt{PutState} key templates are covered. If the accessed keys depend on ledger-state branches, the rule should declare the union of possible keys or route the function to a coarse-grained fallback.
+
+Overprediction is safer but not free. If a prediction adds $m$ extra keys, the probability that a candidate conflicts with the active set grows with the number and popularity of those keys. The compatible fraction in the DBS window therefore falls. In the extreme, predicting a broad warehouse-level or channel-level key degenerates toward Traditional Lock behavior. The formal supply-chain matrix gives an empirical upper bound on this cost. Under SC-W3, Traditional Lock commits only 778.9 and 822.9 transactions at 300 and 500 tx/s, while CAPS commits 2,609.2 and 3,562.8. Thus, a scheduler that becomes too conservative can lose roughly 70.1\%--76.9\% of CAPS's committed work in this workload. This is not a separate overprediction sweep, but it quantifies the throughput penalty of collapsing fine-grained keys into conservative serialization.
+
+Because CAPS is external to Fabric, it is easier to deploy than a peer or orderer modification. The same separation also limits visibility. The scheduler cannot directly control internal block formation or recover capacity lost to a poorly configured ordering service.
+
+\section*{Threats to Validity and Limitations}
+
+First, the current experiments use WSL2 and Docker Desktop on one physical machine. The prototype runs real peers, an orderer, chaincode containers, and the Gateway SDK, but it does not reproduce cross-host network delay, clock variability, or independent resource contention. Multi-machine Linux experiments are required before making deployment-scale claims.
+
+Second, the formal supply-chain matrix is still an application-shaped benchmark rather than a production deployment. It includes warehouse, SKU, batch, and audit semantics with invariant checks, but it does not reproduce all business rules of a real supply-chain platform. Real chaincodes may compute keys dynamically, branch on state read during execution, or call external services. Such workloads require static analysis, annotations, conservative access-set supersets, or a fallback mode for functions whose key coverage cannot be proved. The present experiments do not include a full prediction-coverage toolchain or a parametric overprediction sweep.
+
+Third, PAC thresholds were selected through preliminary experiments in the current environment and should not be interpreted as globally optimal. The sensitivity study in Table~\ref{tab:pac-sensitivity} indicates that CAPS remains ahead of Traditional Lock when queue, admission, delay, and hotspot thresholds are tightened or relaxed, but it also shows a clear throughput--latency trade-off. Online threshold adaptation is an important extension for deployments whose workload mix changes over time.
+
+Fourth, ED-MVCC-Reimpl and DRT-Reimpl reproduce the central scheduling ideas of related work at the external submission layer. Section ``Mechanism-level related-work baselines'' specifies their implemented logic, parameters, and excluded original-system capabilities. This is fairer than comparing against published numbers from different machines and workloads, but it still leaves implementation-bias risk: a source-level port of the original systems could expose engineering details that our mechanism baselines do not cover.
+
+Finally, all experiments reported in the main tables use ten repetitions per setting, and the tables report standard deviations or confidence intervals where appropriate. This improves repeatability but does not remove environment dependence: the observed confidence intervals characterize the current single-machine Fabric deployment, not a population of heterogeneous production deployments.
+
+\section*{Reproducibility and Engineering Artifacts}
+
+The experimental workspace archives the Fabric network configuration, the \texttt{hotkey} chaincode, workload generators, scheduler variants, raw result files, summary tables, and figure-generation scripts. Each run records the offered load, workload parameters, scheduler settings, Fabric parameters, committed and rejected transaction counts, MVCC invalidations, queueing measurements, and client-observed latency. These artifacts allow an experiment to be rerun without reconstructing the environment from the paper alone.
+
+\section*{Data Availability}
+
+The code, raw measurements, and complete reproducibility package are currently maintained in the authors' experimental workspace. A public repository URL and an archival identifier will be added before submission.
+
+\section*{Conclusions}
+
+This paper presented CAPS, an external conflict-aware and pressure-adaptive scheduler for high-contention supply-chain transactions in Hyperledger Fabric. CAPS predicts transaction access sets, prevents unsafe concurrent submissions, selects compatible batches, and tightens admission when overload would otherwise produce long queues. The scheduler leaves Fabric consensus and validation unchanged.
+
+On a real four-peer Fabric network with one Raft orderer and 100 logical clients, CAPS maintains zero observed MVCC-invalid transactions in the formal supply-chain matrix. Relative to Traditional Lock, it increases committed supply-chain transactions by 101.2\%--333.0\% and reduces client-observed latency by 52.8\%--92.8\% across SC-W1, SC-W2, and SC-W3 at 300 and 500 tx/s. The strongest gains appear in the central-warehouse distribution workload, where Traditional Lock serializes behind hot inventory keys and CAPS selects compatible work from the waiting window. Controlled microbenchmarks on offered load, contention, module ablation, endorsement policy, and block-cutting parameters show where the benefit is stable and where it changes form. B5 and B10 settings retain both commit and latency gains. B50 is a low-throughput boundary in which CAPS mainly improves latency control rather than committed volume. Comparisons with early-detection and dependency-reordering baselines expose the main trade-off: CAPS is neither always the lowest-latency policy nor always the highest-acceptance policy, but it provides a controlled balance of useful commits, goodput, rejection, and queueing delay.
+
+Future work will evaluate CAPS on multiple Linux servers, automate conservative access-set inference, and adapt pressure thresholds online using queueing and workload measurements.
+
+\section*{Acknowledgments}
+
+The author thanks the Hyperledger Fabric and Hyperledger Caliper communities for maintaining the open-source infrastructure used in this study.
+
+\FloatBarrier
+
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,40 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8086/submit",
+    "clients": 10,
+    "tps": 5,
+    "duration": 2,
+    "workload": "sc-w3",
+    "warehouseCount": 5,
+    "skuCount": 10,
+    "hotSkuCount": 4,
+    "batchCount": 100,
+    "batchSize": 2,
+    "auditSize": 4,
+    "quantity": 1,
+    "zipfAlpha": 1.2,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "preview": 0,
+    "out": "results/supply-chain-smoke/client.json"
+  },
+  "sent": 10,
+  "localDropped": 0,
+  "completed": 10,
+  "statusCounts": {
+    "200": 10
+  },
+  "functionCounts": {
+    "UpdateBatchStatus": 1,
+    "TransferInventory": 7,
+    "BatchTransferInventory": 1,
+    "AuditInventory": 1
+  },
+  "latencyTotalMs": 26151,
+  "latencyMaxMs": 4767,
+  "elapsedMs": 6168,
+  "sendRate": 5,
+  "completionRate": 1.6212710765239948,
+  "latencyAvgMs": 2615.1
+}

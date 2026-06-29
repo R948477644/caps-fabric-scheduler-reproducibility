@@ -1,0 +1,4 @@
+BatchTimeout=2s
+MaxMessageCount=50
+AbsoluteMaxBytes=103809024
+PreferredMaxBytes=524288

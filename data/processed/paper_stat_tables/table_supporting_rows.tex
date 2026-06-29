@@ -1,0 +1,5 @@
+Contention sensitivity & W3, 300 tx/s, hot=50--500 & CAPS increases commits by 143.1\%--190.7\% and reduces latency by 67.2\%--70.0\%; at hot=20 it reports 255.8$\pm$212.7 commits with 591.7$\pm$39.9 ms latency. \\
+Module ablation & W3, 300 tx/s & ACG+DBS commits 5,153.8$\pm$261.0 but has 1,629.0$\pm$152.0 ms latency; ACG+PAC has 98.0$\pm$79.2 ms latency; CAPS improves commits by 145.7\% and latency by 69.5\%. \\
+Endorsement robustness & Default and OR policies, W3, 300/500 tx/s & Across four settings, CAPS improves commits by 98.6\%--131.5\% and reduces latency by 40.6\%--67.0\%. \\
+Block-cutting robustness & B5, B10, and B50, W3, 300/500 tx/s & CAPS improves commits by 8.4\%--119.5\%; latency reduction ranges from 64.2\% to 70.5\%, with B50 remaining the boundary case. \\
+Related-work baselines & W3, 300/500 tx/s & At 300 tx/s, CAPS commits 4,440.8$\pm$132.6 versus 3,102.7$\pm$75.3 for ED-MVCC; relative to DRT, CAPS reduces latency by 68.0\% at 300 tx/s and 69.4\% at 500 tx/s. \\

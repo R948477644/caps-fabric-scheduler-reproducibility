@@ -1,0 +1,7 @@
+{
+  "operation": "initialize",
+  "warehouseCount": 20,
+  "skuCount": 50,
+  "initialQuantity": 1000000,
+  "batchCount": 100
+}

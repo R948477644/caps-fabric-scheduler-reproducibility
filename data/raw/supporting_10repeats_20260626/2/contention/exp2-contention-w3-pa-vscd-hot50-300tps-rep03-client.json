@@ -1,0 +1,40 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8086/submit",
+    "clients": 100,
+    "tps": 300,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 50,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/2/contention/exp2-contention-w3-pa-vscd-hot50-300tps-rep03-client.json"
+  },
+  "sent": 6000,
+  "localDropped": 0,
+  "completed": 6000,
+  "statusCounts": {
+    "200": 3653,
+    "429": 2343,
+    "599": 4
+  },
+  "functionCounts": {
+    "Transfer": 4200,
+    "AuditAccounts": 1200,
+    "BatchTransfer": 600
+  },
+  "latencyTotalMs": 3398206,
+  "latencyMaxMs": 6957,
+  "elapsedMs": 26498,
+  "sendRate": 300,
+  "completionRate": 226.43218356102346,
+  "latencyAvgMs": 566.3676666666667
+}

@@ -1,0 +1,70 @@
+﻿Timestamp: 2026-06-16
+WSL distro: Ubuntu-22.04
+Workspace: /home/rd/fabric-exp/caliper-vll
+
+[Node]
+v18.19.1
+9.2.0
+
+[Go]
+go version go1.23.0 linux/amd64
+
+[Fabric peer]
+peer:
+ Version: v2.5.15
+ Commit SHA: 83c7930
+ Go version: go1.26.0
+ OS/Arch: linux/amd64
+ Chaincode:
+  Base Docker Label: org.hyperledger.fabric
+  Docker Namespace: hyperledger
+
+
+[Docker]
+Client:
+ Version:           29.5.3
+ API version:       1.54
+ Go version:        go1.26.4
+ Git commit:        d1c06ef
+ Built:             Wed Jun  3 17:59:16 2026
+ OS/Arch:           linux/amd64
+ Context:           default
+
+Server: Docker Desktop 4.77.0 (228796)
+ Engine:
+  Version:          29.5.3
+  API version:      1.54 (minimum version 1.40)
+  Go version:       go1.26.4
+  Git commit:       285b471
+  Built:            Wed Jun  3 17:59:56 2026
+  OS/Arch:          linux/amd64
+  Experimental:     false
+ containerd:
+  Version:          v2.2.4
+  GitCommit:        193637f7ee8ae5f5aa5248f49e7baa3e6164966e
+ runc:
+  Version:          1.3.5
+  GitCommit:        v1.3.5-0-g488fc13e
+ docker-init:
+  Version:          0.19.0
+  GitCommit:        de40ad0
+
+[Docker containers]
+CONTAINER ID   IMAGE                                                                                                                                                                     COMMAND                  CREATED       STATUS        PORTS                                                                                                                                   NAMES
+0b20c3cc3d57   dev-peer0.org2.example.com-hotkey_1.2-4f3db01660894ecfa8f9d846fe34fc7b5503dd0403dcfdc18b127d970b4d9d2c-919ac09746a9b6491cf8756ef6694847d8ac3768c65e76cd98c4be2ba10d48ab   "chaincode -peer.add…"   3 hours ago   Up 3 hours                                                                                                                                            dev-peer0.org2.example.com-hotkey_1.2-4f3db01660894ecfa8f9d846fe34fc7b5503dd0403dcfdc18b127d970b4d9d2c
+bb411e3ea6bd   dev-peer0.org1.example.com-hotkey_1.2-4f3db01660894ecfa8f9d846fe34fc7b5503dd0403dcfdc18b127d970b4d9d2c-f92ed61e2afe8bc190049b40982168c51cb18257a4db293f1d269295fbd6eb96   "chaincode -peer.add…"   3 hours ago   Up 3 hours                                                                                                                                            dev-peer0.org1.example.com-hotkey_1.2-4f3db01660894ecfa8f9d846fe34fc7b5503dd0403dcfdc18b127d970b4d9d2c
+569531d772a0   hyperledger/fabric-peer:latest                                                                                                                                            "peer node start"        4 days ago    Up 4 days     0.0.0.0:7051->7051/tcp, [::]:7051->7051/tcp, 0.0.0.0:9444->9444/tcp, [::]:9444->9444/tcp                                                peer0.org1.example.com
+b3ab1127dfc0   hyperledger/fabric-peer:latest                                                                                                                                            "peer node start"        4 days ago    Up 33 hours   0.0.0.0:9051->9051/tcp, [::]:9051->9051/tcp, 0.0.0.0:9445->9445/tcp, [::]:9445->9445/tcp                                                peer0.org2.example.com
+7adc1a94052d   hyperledger/fabric-peer:latest                                                                                                                                            "peer node start"        4 days ago    Up 4 days     0.0.0.0:8051->8051/tcp, [::]:8051->8051/tcp, 0.0.0.0:9446->9446/tcp, [::]:9446->9446/tcp                                                peer1.org1.example.com
+42e3f6c2af44   hyperledger/fabric-orderer:latest                                                                                                                                         "orderer"                4 days ago    Up 4 days     0.0.0.0:7050->7050/tcp, [::]:7050->7050/tcp, 0.0.0.0:7053->7053/tcp, [::]:7053->7053/tcp, 0.0.0.0:9443->9443/tcp, [::]:9443->9443/tcp   orderer.example.com
+63f5f1fc1c91   hyperledger/fabric-peer:latest                                                                                                                                            "peer node start"        4 days ago    Up 4 days     0.0.0.0:9447->9447/tcp, [::]:9447->9447/tcp, 0.0.0.0:10051->10051/tcp, [::]:10051->10051/tcp                                            peer1.org2.example.com
+
+[Chaincode]
+-rwxr-xr-x 1 rd rd 4.8K Jun 16 09:17 /home/rd/fabric-exp/fabric-samples/hotkey/chaincode.go
+
+[Experiment scripts]
+-rwxr-xr-x 1 rd rd  17K Jun 16 09:34 /home/rd/fabric-exp/caliper-vll/gateway/traditional-lock-dispatcher.js
+-rw-r--r-- 1 rd rd  29K Jun 16 14:06 /home/rd/fabric-exp/caliper-vll/gateway/vll-scd-adaptive-dispatcher.js
+-rwxr-xr-x 1 rd rd 1.1K Jun 16 13:51 /home/rd/fabric-exp/caliper-vll/tools/run-vll-scd-adaptive-w3-matrix.sh
+-rwxr-xr-x 1 rd rd 1.6K Jun 16 09:21 /home/rd/fabric-exp/caliper-vll/tools/run-workload-matrix.sh
+-rw-r--r-- 1 rd rd 6.8K Jun 16 09:27 /home/rd/fabric-exp/caliper-vll/tools/workload-loadgen.js

@@ -1,0 +1,20 @@
+{
+  "operation": "verify",
+  "invariant": "sum of warehouse inventory for each SKU is conserved and every quantity is non-negative",
+  "expectedPerSku": 50000,
+  "checkedSkus": 10,
+  "valid": true,
+  "failures": [],
+  "skuTotals": {
+    "sku00000": 50000,
+    "sku00001": 50000,
+    "sku00002": 50000,
+    "sku00003": 50000,
+    "sku00004": 50000,
+    "sku00005": 50000,
+    "sku00006": 50000,
+    "sku00007": 50000,
+    "sku00008": 50000,
+    "sku00009": 50000
+  }
+}

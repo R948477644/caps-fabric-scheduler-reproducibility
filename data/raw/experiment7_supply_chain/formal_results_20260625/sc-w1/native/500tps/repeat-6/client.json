@@ -1,0 +1,40 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8089/submit",
+    "clients": 100,
+    "tps": 500,
+    "duration": 20,
+    "workload": "sc-w1",
+    "warehouseCount": 20,
+    "skuCount": 50,
+    "hotSkuCount": 10,
+    "batchCount": 100,
+    "batchSize": 4,
+    "auditSize": 8,
+    "quantity": 1,
+    "zipfAlpha": 1.2,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "preview": 0,
+    "out": "/home/rd/fabric-exp/caliper-vll/results/supply-chain-formal-20260625/sc-w1/native/500tps/repeat-6/client.json"
+  },
+  "sent": 10000,
+  "localDropped": 0,
+  "completed": 10000,
+  "statusCounts": {
+    "200": 6546,
+    "500": 3363,
+    "599": 91
+  },
+  "functionCounts": {
+    "AuditInventory": 1975,
+    "TransferInventory": 8025
+  },
+  "latencyTotalMs": 146417724,
+  "latencyMaxMs": 59995,
+  "elapsedMs": 62003,
+  "sendRate": 500,
+  "completionRate": 161.28251858781027,
+  "latencyAvgMs": 14641.7724
+}

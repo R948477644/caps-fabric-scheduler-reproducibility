@@ -1,0 +1,4 @@
+started_at=2026-06-26T16:27:02+08:00
+repeats=10
+duration=20
+finished_at=2026-06-26T17:13:56+08:00

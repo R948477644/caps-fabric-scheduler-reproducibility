@@ -1,0 +1,38 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8089/submit",
+    "clients": 100,
+    "tps": 2,
+    "duration": 1,
+    "workload": "sc-w1",
+    "warehouseCount": 5,
+    "skuCount": 10,
+    "hotSkuCount": 4,
+    "batchCount": 100,
+    "batchSize": 2,
+    "auditSize": 4,
+    "quantity": 1,
+    "zipfAlpha": 1.2,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "preview": 0,
+    "out": "results/supply-chain-four-scheme-smoke/sc-w1/native/2tps/repeat-1/client.json"
+  },
+  "sent": 2,
+  "localDropped": 0,
+  "completed": 2,
+  "statusCounts": {
+    "200": 2
+  },
+  "functionCounts": {
+    "AuditInventory": 1,
+    "TransferInventory": 1
+  },
+  "latencyTotalMs": 3761,
+  "latencyMaxMs": 2131,
+  "elapsedMs": 2132,
+  "sendRate": 2,
+  "completionRate": 0.9380863039399624,
+  "latencyAvgMs": 1880.5
+}

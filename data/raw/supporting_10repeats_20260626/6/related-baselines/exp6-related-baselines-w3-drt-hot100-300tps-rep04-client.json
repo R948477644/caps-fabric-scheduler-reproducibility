@@ -1,0 +1,39 @@
+{
+  "config": {
+    "url": "http://127.0.0.1:8088/submit",
+    "clients": 100,
+    "tps": 300,
+    "duration": 20,
+    "accountCount": 1000,
+    "hotAccountCount": 100,
+    "amount": 1,
+    "workload": "w3",
+    "batchSize": 2,
+    "auditSize": 8,
+    "transferPct": 70,
+    "auditPct": 20,
+    "batchPct": 10,
+    "timeoutMs": 240000,
+    "maxOutstanding": 10000,
+    "maxSockets": 10000,
+    "out": "/mnt/c/Users/94847/Documents/paper_2026/results/supporting_10repeats_20260626/6/related-baselines/exp6-related-baselines-w3-drt-hot100-300tps-rep04-client.json"
+  },
+  "sent": 6000,
+  "localDropped": 0,
+  "completed": 6000,
+  "statusCounts": {
+    "200": 4902,
+    "429": 1098
+  },
+  "functionCounts": {
+    "Transfer": 4200,
+    "AuditAccounts": 1200,
+    "BatchTransfer": 600
+  },
+  "latencyTotalMs": 9720210,
+  "latencyMaxMs": 16597,
+  "elapsedMs": 28507,
+  "sendRate": 300,
+  "completionRate": 210.47462026870593,
+  "latencyAvgMs": 1620.035
+}
