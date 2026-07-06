@@ -70,12 +70,11 @@ different location.
 
 ## Data Availability Statement
 
-For submission, replace the placeholder below with the final GitHub release URL
-and Zenodo DOI:
-
-> The source code, experimental configurations, raw data, processed data, and
-> plotting scripts are available at `GITHUB_RELEASE_URL`. The version used for
-> the manuscript is archived on Zenodo under DOI `ZENODO_DOI`.
+The source code, experimental configurations, raw data, processed data, and
+plotting scripts are available in the GitHub release:
+https://github.com/R948477644/caps-fabric-scheduler-reproducibility/releases/tag/v1.0.0-peerj-submission.
+The version used for the manuscript is archived on Zenodo:
+https://doi.org/10.5281/zenodo.21211955.
 
 ## License
 

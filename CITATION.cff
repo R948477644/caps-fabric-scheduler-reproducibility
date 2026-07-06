@@ -6,6 +6,7 @@ authors:
     given-names: "Runde"
 version: "1.0.0-peerj-submission"
 date-released: "2026-06-29"
-repository-code: "https://github.com/USERNAME/caps-fabric-scheduler-reproducibility"
+repository-code: "https://github.com/R948477644/caps-fabric-scheduler-reproducibility"
+doi: "10.5281/zenodo.21211955"
 license: "MIT"
 abstract: "Code, configuration, raw data, processed data, figures, and manuscript assets for CAPS, a conflict-aware and pressure-adaptive scheduler for high-contention supply-chain transactions in Hyperledger Fabric."

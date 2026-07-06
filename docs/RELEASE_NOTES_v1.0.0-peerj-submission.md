@@ -11,8 +11,7 @@ Included materials:
 - Processed LaTeX table rows and manuscript figures.
 - PeerJ manuscript source and a reviewed local PDF build.
 
-Known limits:
+Archival links:
 
-- The repository is prepared locally and must still be pushed to GitHub.
-- `GITHUB_RELEASE_URL` and `ZENODO_DOI` placeholders should be replaced after creating a public GitHub release and linking it to Zenodo.
-
+- GitHub release: https://github.com/R948477644/caps-fabric-scheduler-reproducibility/releases/tag/v1.0.0-peerj-submission
+- Zenodo DOI: https://doi.org/10.5281/zenodo.21211955
